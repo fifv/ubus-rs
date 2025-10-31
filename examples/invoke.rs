@@ -1,11 +1,11 @@
 use std::{convert::TryInto, path::Path};
 
-use ubus::{BlobMsg, UbusObject};
+use ubus::{BlobMsg, UbusObject, json_to_args};
 
 fn main() {
     let obj_path = "fifv";
     let method = "echo";
-    let args = r#"{"name":"eth0"}"#;
+    let req_args = r#"{"name":"eth0"}"#;
 
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
@@ -18,8 +18,8 @@ fn main() {
     let obj = connection.lookup(obj_path).unwrap();
     dbg!("{}", &obj);
     // let obj: UbusObject = serde_json::from_str(&obj).unwrap();
-    let args = obj.args_from_json(method, args).unwrap();
-    let bi = connection.invoke(obj.id, method, &args).unwrap();
+    let req_args = json_to_args(req_args).unwrap();
+    let bi = connection.invoke(obj.id, method, &req_args).unwrap();
     let json_str = {
         let mut json_str = String::new();
         json_str = "{\n".to_string();

@@ -5,6 +5,8 @@ use std::{io, string::FromUtf8Error};
 use alloc::string::String;
 use thiserror::Error;
 
+use crate::UbusBlobType;
+
 #[derive(Debug, Error)]
 pub enum UbusError {
     #[error("io error")]
@@ -21,4 +23,6 @@ pub enum UbusError {
     ParseArguments(#[from] serde_json::Error),
     #[error("Invalid method:{0}")]
     InvalidMethod(String),
+    #[error("Invalid blog type:{0}")]
+    InvalidBlobType(UbusBlobType),
 }

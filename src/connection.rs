@@ -1,10 +1,12 @@
 use crate::*;
 
+use core::ops::Not;
 use core::panic;
-use std::{borrow::ToOwned, collections::HashMap, dbg, string::ToString};
+use std::{borrow::ToOwned, collections::HashMap, dbg, string::ToString, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
 use std::format;
+use std::vec;
 use ubuserror::*;
 
 #[derive(Copy, Clone)]
@@ -70,65 +72,71 @@ impl<T: IO> Connection<T> {
 
     // Get next message from ubus channel (blocking!)
     pub fn next_message(&mut self) -> Result<UbusMsg, UbusError> {
-        UbusMsg::from_io(&mut self.io, &mut self.buffer)
+        UbusMsg::from_io(&mut self.io)
     }
 
-    pub fn send(&mut self, message: UbusMsgBuilder) -> Result<(), UbusError> {
-        self.io.put(message.into())
+    pub fn send(&mut self, message: UbusMsg) -> Result<(), UbusError> {
+        // self.io.put(&Into::<Vec<u8>>::into(message))
+        self.io.put(&message.to_bytes())
     }
 
     pub fn invoke(
         &mut self,
         obj: u32,
         method: &str,
-        args: &[u8],
-    ) -> Result<BlobIter<Blob>, UbusError> {
+        req_args: Vec<BlobMsg>,
+    ) -> Result<Vec<BlobMsg>, UbusError> {
         let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
-        let mut message = UbusMsgBuilder::new(&header).unwrap();
-        message.put(UbusMsgAttr::ObjId(obj))?;
-        message.put(UbusMsgAttr::Method(method.to_string()))?;
+        let req_blobs: Vec<UbusBlob> = vec![
+            UbusBlob::ObjId(obj as i32),
+            UbusBlob::Method(method.to_string()),
+            UbusBlob::Data(req_args.to_vec()),
+        ];
+        let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
+        // let mut message = UbusMsg::new(&header).unwrap();
+        // message.put(UbusMsgAttr::ObjId(obj))?;
+        // message.put(UbusMsgAttr::Method(method.to_string()))?;
 
-        message.put(UbusMsgAttr::Data(args.to_vec()))?;
+        // message.put(UbusMsgAttr::Data(req_args.to_vec()))?;
 
         self.send(message)?;
 
-        let mut blob: Option<BlobIter<Blob>> = None;
-        'message: loop {
+        let mut res_args: Vec<BlobMsg> = Vec::new();
+        /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
+        'messages: loop {
             let message = self.next_message()?;
             if message.header.sequence != header.sequence {
                 continue;
             }
             dbg!(&message);
 
-            let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
-                    for attr in attrs {
-                        dbg!(&attr);
-                        match attr {
-                            UbusMsgAttr::Status(UbusMsgStatus::OK) => {
-                                break 'message Ok(blob.expect("why no blob?"));
+                    for blob in message.blobs {
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                break 'messages Ok(res_args);
                             }
-                            UbusMsgAttr::Status(status) => return Err(UbusError::Status(status)),
+                            UbusBlob::Status(status) => return Err(UbusError::Status(status)),
                             _ => continue,
                         }
                     }
                     return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::DATA => {
-                    for attr in attrs {
-                        dbg!(&attr);
-                        if let UbusMsgAttr::Data(data) = attr {
-                            blob = Some(BlobIter::<Blob>::new(data));
-                            dbg!(&blob);
-                            continue 'message;
+                    for blob in message.blobs {
+                        dbg!(&blob);
+                        if let UbusBlob::Data(data) = blob {
+                            res_args = data;
+                            dbg!(&res_args);
+                            continue 'messages;
                         }
                     }
                     return Err(UbusError::InvalidData("Invalid data message"));
                 }
                 unknown => {
-                    std::dbg!(unknown);
+                    dbg!(unknown);
                 }
             }
         }
@@ -138,28 +146,28 @@ impl<T: IO> Connection<T> {
         &'a mut self,
         obj_path: &'a str,
         method: &'a str,
-        args: &'a str,
+        req_args: &'a str,
     ) -> Result<String, UbusError> {
         let obj_json = self.lookup_object_json(obj_path)?;
         // dbg!(&obj_json);
         let obj: UbusObject = serde_json::from_str(&obj_json)?;
         // dbg!(&obj);
-        let args_data = obj.args_from_json(method, args).expect("not valid json");
-        dbg!(&args, &args_data);
-        let bi = self.invoke(obj.id, method, &args_data)?;
-        
+        // let req_args = obj.args_from_json(method, args).expect("not valid json");
+        let req_args = json_to_args(req_args).unwrap();
+        // dbg!(&args, &req_args);
+        let res_args = self.invoke(obj.id, method, req_args)?;
+
         // dbg!(&bi);
         let json = {
             let mut json = String::new();
             json += "{\n";
             let mut first = true;
-            for x in bi {
-                dbg!(&x);
+            for msg in res_args {
+                // dbg!(&msg);
                 if !first {
                     json += ",\n";
                 }
                 //json_str += &format!("{:?}", x);
-                let msg: BlobMsg = x.try_into().unwrap();
                 json += &format!("\t{}", msg);
                 first = false;
             }
@@ -176,84 +184,83 @@ impl<T: IO> Connection<T> {
             .map_err(|e| UbusError::InvalidData("Failed to stringify"))
     }
 
-    pub fn lookup_cb(
-        &mut self,
-        obj_path: &str,
-        mut on_object: impl FnMut(&ObjectResult),
-        mut on_signature: impl FnMut(&SignatureResult),
-    ) -> Result<(), UbusError> {
-        let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
-        let mut request = UbusMsgBuilder::new(&header).unwrap();
-        if obj_path.len() != 0 {
-            request
-                .put(UbusMsgAttr::ObjPath(obj_path.to_string()))
-                .unwrap();
-        }
-        self.send(request)?;
+    // pub fn lookup_cb(
+    //     &mut self,
+    //     obj_path: &str,
+    //     mut on_object: impl FnMut(&ObjectResult),
+    //     mut on_signature: impl FnMut(&SignatureResult),
+    // ) -> Result<(), UbusError> {
+    //     let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
+    //     let mut request = UbusMsgBuilder::new(&header).unwrap();
+    //     if obj_path.len() != 0 {
+    //         request
+    //             .put(UbusMsgAttr::ObjPath(obj_path.to_string()))
+    //             .unwrap();
+    //     }
+    //     self.send(request)?;
 
-        loop {
-            let message = self.next_message()?;
-            if message.header.sequence != header.sequence {
-                continue;
-            }
+    //     loop {
+    //         let message = self.next_message()?;
+    //         if message.header.sequence != header.sequence {
+    //             continue;
+    //         }
 
-            let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
-            if message.header.cmd_type == UbusCmdType::STATUS {
-                for attr in attrs {
-                    if let UbusMsgAttr::Status(UbusMsgStatus::OK) = attr {
-                        return Ok(());
-                    } else if let UbusMsgAttr::Status(status) = attr {
-                        return Err(UbusError::Status(status));
-                    }
-                }
-                return Err(UbusError::InvalidData("Invalid status message"));
-            }
+    //         if message.header.cmd_type == UbusCmdType::STATUS {
+    //             for blobs in message.blobs {
+    //                 if let UbusBlob::Status(UbusMsgStatus::OK) = blobs {
+    //                     return Ok(());
+    //                 } else if let UbusBlob::Status(status) = blobs {
+    //                     return Err(UbusError::Status(status));
+    //                 }
+    //             }
+    //             return Err(UbusError::InvalidData("Invalid status message"));
+    //         }
 
-            if message.header.cmd_type != UbusCmdType::DATA {
-                continue;
-            }
+    //         if message.header.cmd_type != UbusCmdType::DATA {
+    //             continue;
+    //         }
 
-            let mut obj_path: Option<String> = None;
-            let mut obj_id: Option<u32> = None;
-            let mut obj_type: Option<u32> = None;
-            for attr in attrs {
-                match attr {
-                    UbusMsgAttr::ObjPath(path) => obj_path = Some(path),
-                    UbusMsgAttr::ObjId(id) => obj_id = Some(id),
-                    UbusMsgAttr::ObjType(ty) => obj_type = Some(ty),
-                    UbusMsgAttr::Signature(nested) => {
-                        let object = ObjectResult {
-                            path: &obj_path.clone().unwrap(),
-                            id: obj_id.unwrap(),
-                            ty: obj_type.unwrap(),
-                        };
-                        on_object(&object);
+    //         let mut obj_path: Option<String> = None;
+    //         let mut obj_id: Option<u32> = None;
+    //         let mut obj_type: Option<u32> = None;
+    //         for blobs in message.blobs {
+    //             match blobs {
+    //                 UbusBlob::ObjPath(path) => obj_path = Some(path),
+    //                 UbusBlob::ObjId(id) => obj_id = Some(id),
+    //                 UbusBlob::ObjType(ty) => obj_type = Some(ty),
+    //                 UbusBlob::Signature(nested) => {
+    //                     let object = ObjectResult {
+    //                         path: &obj_path.clone().unwrap(),
+    //                         id: obj_id.unwrap(),
+    //                         ty: obj_type.unwrap(),
+    //                     };
+    //                     on_object(&object);
 
-                        for signature in nested {
-                            if let BlobMsgPayload::Table(table) = signature.1 {
-                                on_signature(&SignatureResult {
-                                    object,
-                                    name: signature.0,
-                                    args: table
-                                        .iter()
-                                        .map(|(k, v)| {
-                                            if let BlobMsgPayload::Int32(typeid) = *v {
-                                                (k.clone(), BlobMsgType::from(typeid as u32))
-                                            } else {
-                                                panic!()
-                                            }
-                                        })
-                                        .collect(),
-                                })
-                            }
-                        }
-                    }
-                    _ => continue,
-                }
-            }
-        }
-    }
+    //                     for signature in nested {
+    //                         if let BlobMsgPayload::Table(table) = signature.1 {
+    //                             on_signature(&SignatureResult {
+    //                                 object,
+    //                                 name: signature.0,
+    //                                 args: table
+    //                                     .iter()
+    //                                     .map(|blogmsg| {
+    //                                         if let BlobMsgPayload::Int32(typeid) = blogmsg.data {
+    //                                             (blogmsg.name.to_string(), BlobMsgType::from(typeid as u32))
+    //                                         } else {
+    //                                             panic!()
+    //                                         }
+    //                                     })
+    //                                     .collect(),
+    //                             })
+    //                         }
+    //                     }
+    //                 }
+    //                 _ => continue,
+    //             }
+    //         }
+    //     }
+    // }
 
     pub fn lookup_id(&mut self, obj_path: &str) -> Result<u32, UbusError> {
         Ok(self.lookup(obj_path)?.id)
@@ -261,12 +268,11 @@ impl<T: IO> Connection<T> {
 
     pub fn lookup(&mut self, obj_path: &str) -> Result<UbusObject, UbusError> {
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
-        let mut request = UbusMsgBuilder::new(&header).unwrap();
-        if obj_path.len() != 0 {
-            request
-                .put(UbusMsgAttr::ObjPath(obj_path.to_string()))
-                .unwrap();
-        }
+
+        let req_blobs: Vec<UbusBlob> = obj_path.is_empty().not().then(|| UbusBlob::ObjPath(obj_path.to_string())).into_iter().collect();
+
+
+        let request = UbusMsg::from_header_and_blobs(&header, req_blobs);
         self.send(request)?;
 
         let mut obj = UbusObject::default();
@@ -278,40 +284,40 @@ impl<T: IO> Connection<T> {
                 continue;
             }
 
-            let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
+
             /* here the `obj` is inserted with some reference from `message`, then if we try to return it, rust ensure `message` should live longer than `obj`   */
             /* i check the code, message is a lot of slice to a global buffer in Connection, each time next_message() got called, the global buffer got overriden */
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
-                    for attr in attrs {
-                        dbg!(&attr);
-                        match attr {
-                            UbusMsgAttr::Status(UbusMsgStatus::OK) => break 'message_iter Ok(obj),
-                            UbusMsgAttr::Status(status) => return Err(UbusError::Status(status)),
+                    for blob in message.blobs {
+                        dbg!(&blob);
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => break 'message_iter Ok(obj),
+                            UbusBlob::Status(status) => return Err(UbusError::Status(status)),
                             _ => continue,
                         }
                     }
                     return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::DATA => {
-                    for attr in attrs {
-                        dbg!(&attr);
-                        match attr {
-                            UbusMsgAttr::ObjPath(path) => obj.path = path.to_string(),
-                            UbusMsgAttr::ObjId(id) => obj.id = id,
-                            UbusMsgAttr::ObjType(ty) => obj.ty = ty,
-                            UbusMsgAttr::Signature(nested) => {
+                    for blob in message.blobs {
+                        dbg!(&blob);
+                        match blob {
+                            UbusBlob::ObjPath(path) => obj.path = path.to_string(),
+                            UbusBlob::ObjId(id) => obj.id = id as u32,
+                            UbusBlob::ObjType(ty) => obj.ty = ty as u32,
+                            UbusBlob::Signature(nested) => {
                                 for item in nested {
                                     let signature = Method {
-                                        name: item.0.to_string(),
-                                        policy: if let BlobMsgPayload::Table(table) = item.1 {
+                                        name: item.name.to_string(),
+                                        policy: if let BlobMsgPayload::Table(table) = item.data {
                                             table
                                                 .iter()
-                                                .map(|(k, v)| {
-                                                    if let BlobMsgPayload::Int32(typeid) = *v {
+                                                .map(|blogmsg| {
+                                                    if let BlobMsgPayload::Int32(typeid) = blogmsg.data {
                                                         (
-                                                            k.to_string(),
+                                                            blogmsg.name.to_string(),
                                                             BlobMsgType::from(typeid as u32),
                                                         )
                                                     } else {
@@ -323,7 +329,7 @@ impl<T: IO> Connection<T> {
                                             panic!()
                                         },
                                     };
-                                    obj.methods.insert(item.0.to_string(), signature);
+                                    obj.methods.insert(item.name.to_string(), signature);
                                 }
                             }
                             _ => continue,

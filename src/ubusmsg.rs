@@ -1,13 +1,18 @@
-use crate::{Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, IO, Payload, UbusError};
+use crate::{
+    Blob, BlobBuilder, BlobIter, BlobMsg, BlobMsgPayload, BlobTag, IO, Payload, UbusBlob, UbusError,
+};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
-use std::borrow::ToOwned;
-use std::dbg;
 use serde::{Deserialize, Serialize};
+use std::borrow::ToOwned;
 use std::collections::HashMap;
 use std::string::String;
 use std::vec::Vec;
+use std::{dbg, vec};
 use storage_endian::{BEu16, BEu32};
+
+pub type MsgTable = Vec<BlobMsg>;
+
 
 values!(pub UbusMsgVersion(u8) {
     CURRENT = 0x00,
@@ -87,49 +92,80 @@ impl UbusMsgHeader {
 #[derive(Clone)]
 pub struct UbusMsg {
     pub header: UbusMsgHeader,
-    pub blob: Blob,
+    pub blobs: Vec<UbusBlob>,
 }
 
+
 impl UbusMsg {
-    pub fn from_io<T: IO>(io: &mut T, buffer: &mut [u8]) -> Result<Self, UbusError> {
-        let (pre_buffer, buffer) = buffer.split_at_mut(UbusMsgHeader::SIZE + BlobTag::SIZE);
-
-        // Read in the message header and the following blob tag
-        io.get(pre_buffer)?;
-
-        let (header, tag) = pre_buffer.split_at(UbusMsgHeader::SIZE);
-
-        let header = UbusMsgHeader::from_bytes(header.try_into().unwrap());
+    pub fn from_io<T: IO>(io: &mut T) -> Result<Self, UbusError> {
+        /* read ubus message header */
+        let mut ubusmsg_header_buffer = [0u8; UbusMsgHeader::SIZE];
+        io.get(&mut ubusmsg_header_buffer)?;
+        let header = UbusMsgHeader::from_bytes(ubusmsg_header_buffer);
         valid_data!(header.version == UbusMsgVersion::CURRENT, "Wrong version");
 
-        let tag = BlobTag::from_bytes(tag.try_into().unwrap());
+        /* read the container blob header */
+        let mut ubusmsg_blob_header_buffer = [0u8; BlobTag::SIZE];
+        io.get(&mut ubusmsg_blob_header_buffer)?;
+        let tag = BlobTag::from_bytes(&ubusmsg_blob_header_buffer);
         tag.is_valid()?;
 
-        // Get a slice the size of the blob's data bytes (do we need to worry about padding here?)
-        let data = &mut buffer[..tag.inner_len()];
+        /* use the length extracted from blob header, read such length of blob data  */
+        let mut ubusmsg_data_buffer = vec![0u8; tag.inner_len()];
+        io.get(&mut ubusmsg_data_buffer)?;
+        let blobs = BlobIter::<UbusBlob>::new(ubusmsg_data_buffer).collect();
+        // let blob = UbusBlob::from_tag_and_data(tag, ubusmsg_data_buffer).unwrap();
 
-        // Receive data into slice
-        io.get(data)?;
-
-        // Create the blob from our parts
-        let blob = Blob::from_tag_and_data(tag, data).unwrap();
-
-        Ok(UbusMsg { header, blob })
+        Ok(UbusMsg { header, blobs })
     }
+
+    pub fn from_header_and_blobs(header: &UbusMsgHeader, blobs: Vec<UbusBlob>) -> Self {
+        Self {
+            header: *header,
+            blobs: blobs,
+        }
+    }
+
+    pub fn to_bytes(self) -> Vec<u8> {
+        let ubusmsg_header_buf = self.header.to_bytes();
+
+
+        let mut ubusmsg_blobs_buffer = Vec::new();
+        for blob in self.blobs {
+            ubusmsg_blobs_buffer.extend_from_slice(&blob.to_bytes());
+        }
+
+        let ubusmsg_blob_header_buffer = BlobTag::try_build(
+            UbusBlobType::UNSPEC,
+            BlobTag::SIZE + ubusmsg_blobs_buffer.len(),
+            false,
+        )
+        .expect("???")
+        .to_bytes();
+
+
+        let mut raw_msg_data = Vec::new();
+        raw_msg_data.extend_from_slice(&ubusmsg_header_buf);
+        raw_msg_data.extend_from_slice(&ubusmsg_blob_header_buffer);
+        raw_msg_data.extend_from_slice(&ubusmsg_blobs_buffer);
+        raw_msg_data
+    }
+
 }
 
 impl core::fmt::Debug for UbusMsg {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         write!(
             f,
-            "Message({:?} seq={} peer={:08x}, size={})",
-            self.header.cmd_type,
-            self.header.sequence,
-            self.header.peer,
-            self.blob.data.len()
+            "Message({:?} seq={}, peer={:08x}, blobs={:?})",
+            self.header.cmd_type, self.header.sequence, self.header.peer, self.blobs
         )
     }
 }
+
+// impl Into<Vec<u8>> for UbusMsg {
+
+// }
 
 pub struct UbusMsgBuilder {
     buffer: Vec<u8>,
@@ -180,9 +216,14 @@ impl UbusMsgBuilder {
 
     pub fn finish(self) -> Vec<u8> {
         // Update tag with correct size
-        let tag = BlobTag::try_build(UbusBlobType::UNSPEC, self.offset - UbusMsgHeader::SIZE, false).unwrap();
-        let tag_buf = & self.buffer[UbusMsgHeader::SIZE..UbusMsgHeader::SIZE + BlobTag::SIZE];
-        let tag_buf: & [u8; BlobTag::SIZE] = tag_buf.try_into().unwrap();
+        let tag = BlobTag::try_build(
+            UbusBlobType::UNSPEC,
+            self.offset - UbusMsgHeader::SIZE,
+            false,
+        )
+        .unwrap();
+        let tag_buf = &self.buffer[UbusMsgHeader::SIZE..UbusMsgHeader::SIZE + BlobTag::SIZE];
+        let tag_buf: &[u8; BlobTag::SIZE] = tag_buf.try_into().unwrap();
         *tag_buf = tag.to_bytes();
         self.buffer[..self.offset].to_owned()
     }
@@ -205,14 +246,14 @@ pub enum UbusMsgAttr {
     Target(u32),
     Active(bool),
     NoReply(bool),
-    Subscribers(BlobIter<Blob>),
+    Subscribers(BlobIter<UbusBlob>),
     User(String),
     Group(String),
     Unknown(UbusBlobType, Vec<u8>),
 }
 
-impl<'a> From<Blob> for UbusMsgAttr {
-    fn from(blob: Blob) -> Self {
+impl<'a> From<UbusBlob> for UbusMsgAttr {
+    fn from(blob: UbusBlob) -> Self {
         let payload = Payload::from(&blob.data);
         match blob.tag.id().into() {
             UbusBlobType::STATUS => UbusMsgAttr::Status(payload.try_into().unwrap()),

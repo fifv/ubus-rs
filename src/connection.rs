@@ -1,7 +1,7 @@
 use crate::*;
 
 use core::panic;
-use std::collections::HashMap;
+use std::{borrow::ToOwned, collections::HashMap, dbg, string::ToString};
 extern crate alloc;
 use alloc::string::String;
 use std::format;
@@ -21,8 +21,8 @@ impl core::fmt::Debug for ObjectResult<'_> {
 
 pub struct SignatureResult<'a> {
     pub object: ObjectResult<'a>,
-    pub name: &'a str,
-    pub args: HashMap<&'a str, BlobMsgType>,
+    pub name: String,
+    pub args: HashMap<String, BlobMsgType>,
 }
 
 #[derive(Clone, Copy)]
@@ -82,40 +82,46 @@ impl<T: IO> Connection<T> {
         obj: u32,
         method: &str,
         args: &[u8],
-        mut on_result: impl FnMut(BlobIter<Blob>),
-    ) -> Result<(), UbusError> {
-        let mut buffer = [0u8; 1024];
+    ) -> Result<BlobIter<Blob>, UbusError> {
         let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
-        let mut message = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
+        let mut message = UbusMsgBuilder::new(&header).unwrap();
         message.put(UbusMsgAttr::ObjId(obj))?;
-        message.put(UbusMsgAttr::Method(method))?;
+        message.put(UbusMsgAttr::Method(method.to_string()))?;
 
-        message.put(UbusMsgAttr::Data(&args))?;
+        message.put(UbusMsgAttr::Data(args.to_vec()))?;
 
         self.send(message)?;
+
+        let mut blob: Option<BlobIter<Blob>> = None;
         'message: loop {
             let message = self.next_message()?;
             if message.header.sequence != header.sequence {
                 continue;
             }
+            dbg!(&message);
 
             let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
                     for attr in attrs {
-                        if let UbusMsgAttr::Status(0) = attr {
-                            return Ok(());
-                        } else if let UbusMsgAttr::Status(status) = attr {
-                            return Err(UbusError::Status(status));
+                        dbg!(&attr);
+                        match attr {
+                            UbusMsgAttr::Status(UbusMsgStatus::OK) => {
+                                break 'message Ok(blob.expect("why no blob?"));
+                            }
+                            UbusMsgAttr::Status(status) => return Err(UbusError::Status(status)),
+                            _ => continue,
                         }
                     }
                     return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::DATA => {
                     for attr in attrs {
+                        dbg!(&attr);
                         if let UbusMsgAttr::Data(data) = attr {
-                            on_result(BlobIter::new(data));
+                            blob = Some(BlobIter::<Blob>::new(data));
+                            dbg!(&blob);
                             continue 'message;
                         }
                     }
@@ -135,13 +141,20 @@ impl<T: IO> Connection<T> {
         args: &'a str,
     ) -> Result<String, UbusError> {
         let obj_json = self.lookup_object_json(obj_path)?;
+        // dbg!(&obj_json);
         let obj: UbusObject = serde_json::from_str(&obj_json)?;
-        let args = obj.args_from_json(method, args).unwrap();
-        let mut json = String::new();
-        self.invoke(obj.id, method, &args, |bi| {
+        // dbg!(&obj);
+        let args_data = obj.args_from_json(method, args).expect("not valid json");
+        dbg!(&args, &args_data);
+        let bi = self.invoke(obj.id, method, &args_data)?;
+        
+        // dbg!(&bi);
+        let json = {
+            let mut json = String::new();
             json += "{\n";
             let mut first = true;
             for x in bi {
+                dbg!(&x);
                 if !first {
                     json += ",\n";
                 }
@@ -151,29 +164,30 @@ impl<T: IO> Connection<T> {
                 first = false;
             }
             json += "\n}";
-        })?;
+            json
+        };
+
+
         Ok(json)
     }
 
     pub fn lookup_object_json<'a>(&'a mut self, obj_path: &'a str) -> Result<String, UbusError> {
-        let mut obj_json = String::new();
-        self.lookup(obj_path, |obj| {
-            obj_json = serde_json::to_string_pretty(&obj).unwrap();
-        })?;
-        Ok(obj_json)
+        serde_json::to_string_pretty(&self.lookup(obj_path)?)
+            .map_err(|e| UbusError::InvalidData("Failed to stringify"))
     }
 
     pub fn lookup_cb(
         &mut self,
         obj_path: &str,
-        mut on_object: impl FnMut(ObjectResult),
-        mut on_signature: impl FnMut(SignatureResult),
+        mut on_object: impl FnMut(&ObjectResult),
+        mut on_signature: impl FnMut(&SignatureResult),
     ) -> Result<(), UbusError> {
-        let mut buffer = [0u8; 1024];
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
-        let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
+        let mut request = UbusMsgBuilder::new(&header).unwrap();
         if obj_path.len() != 0 {
-            request.put(UbusMsgAttr::ObjPath(obj_path)).unwrap();
+            request
+                .put(UbusMsgAttr::ObjPath(obj_path.to_string()))
+                .unwrap();
         }
         self.send(request)?;
 
@@ -187,7 +201,7 @@ impl<T: IO> Connection<T> {
 
             if message.header.cmd_type == UbusCmdType::STATUS {
                 for attr in attrs {
-                    if let UbusMsgAttr::Status(0) = attr {
+                    if let UbusMsgAttr::Status(UbusMsgStatus::OK) = attr {
                         return Ok(());
                     } else if let UbusMsgAttr::Status(status) = attr {
                         return Err(UbusError::Status(status));
@@ -200,7 +214,7 @@ impl<T: IO> Connection<T> {
                 continue;
             }
 
-            let mut obj_path: Option<&str> = None;
+            let mut obj_path: Option<String> = None;
             let mut obj_id: Option<u32> = None;
             let mut obj_type: Option<u32> = None;
             for attr in attrs {
@@ -210,22 +224,22 @@ impl<T: IO> Connection<T> {
                     UbusMsgAttr::ObjType(ty) => obj_type = Some(ty),
                     UbusMsgAttr::Signature(nested) => {
                         let object = ObjectResult {
-                            path: obj_path.unwrap(),
+                            path: &obj_path.clone().unwrap(),
                             id: obj_id.unwrap(),
                             ty: obj_type.unwrap(),
                         };
-                        on_object(object);
+                        on_object(&object);
 
                         for signature in nested {
                             if let BlobMsgPayload::Table(table) = signature.1 {
-                                on_signature(SignatureResult {
+                                on_signature(&SignatureResult {
                                     object,
                                     name: signature.0,
                                     args: table
                                         .iter()
                                         .map(|(k, v)| {
                                             if let BlobMsgPayload::Int32(typeid) = *v {
-                                                (*k, BlobMsgType::from(typeid as u32))
+                                                (k.clone(), BlobMsgType::from(typeid as u32))
                                             } else {
                                                 panic!()
                                             }
@@ -242,78 +256,84 @@ impl<T: IO> Connection<T> {
     }
 
     pub fn lookup_id(&mut self, obj_path: &str) -> Result<u32, UbusError> {
-        let mut obj_id = 0u32;
-        self.lookup(obj_path, |obj| obj_id = obj.id)?;
-        Ok(obj_id)
+        Ok(self.lookup(obj_path)?.id)
     }
 
-    pub fn lookup(
-        &mut self,
-        obj_path: &str,
-        mut on_object: impl FnMut(UbusObject),
-    ) -> Result<(), UbusError> {
-        let mut buffer = [0u8; 1024];
+    pub fn lookup(&mut self, obj_path: &str) -> Result<UbusObject, UbusError> {
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
-        let mut request = UbusMsgBuilder::new(&mut buffer, &header).unwrap();
+        let mut request = UbusMsgBuilder::new(&header).unwrap();
         if obj_path.len() != 0 {
-            request.put(UbusMsgAttr::ObjPath(obj_path)).unwrap();
+            request
+                .put(UbusMsgAttr::ObjPath(obj_path.to_string()))
+                .unwrap();
         }
         self.send(request)?;
 
-        loop {
+        let mut obj = UbusObject::default();
+
+        'message_iter: loop {
             let message = self.next_message()?;
+            dbg!(&message);
             if message.header.sequence != header.sequence {
                 continue;
             }
 
             let attrs = BlobIter::<UbusMsgAttr>::new(message.blob.data);
+            /* here the `obj` is inserted with some reference from `message`, then if we try to return it, rust ensure `message` should live longer than `obj`   */
+            /* i check the code, message is a lot of slice to a global buffer in Connection, each time next_message() got called, the global buffer got overriden */
 
-            if message.header.cmd_type == UbusCmdType::STATUS {
-                for attr in attrs {
-                    if let UbusMsgAttr::Status(0) = attr {
-                        return Ok(());
-                    } else if let UbusMsgAttr::Status(status) = attr {
-                        return Err(UbusError::Status(status));
-                    }
-                }
-                return Err(UbusError::InvalidData("Invalid status message"));
-            }
-
-            if message.header.cmd_type != UbusCmdType::DATA {
-                continue;
-            }
-            let mut obj = UbusObject::default();
-            for attr in attrs {
-                match attr {
-                    UbusMsgAttr::ObjPath(path) => obj.path = path,
-                    UbusMsgAttr::ObjId(id) => obj.id = id,
-                    UbusMsgAttr::ObjType(ty) => obj.ty = ty,
-                    UbusMsgAttr::Signature(nested) => {
-                        for item in nested {
-                            let signature = Method {
-                                name: item.0,
-                                policy: if let BlobMsgPayload::Table(table) = item.1 {
-                                    table
-                                        .iter()
-                                        .map(|(k, v)| {
-                                            if let BlobMsgPayload::Int32(typeid) = *v {
-                                                (*k, BlobMsgType::from(typeid as u32))
-                                            } else {
-                                                panic!()
-                                            }
-                                        })
-                                        .collect()
-                                } else {
-                                    panic!()
-                                },
-                            };
-                            obj.methods.insert(item.0, signature);
+            match message.header.cmd_type {
+                UbusCmdType::STATUS => {
+                    for attr in attrs {
+                        dbg!(&attr);
+                        match attr {
+                            UbusMsgAttr::Status(UbusMsgStatus::OK) => break 'message_iter Ok(obj),
+                            UbusMsgAttr::Status(status) => return Err(UbusError::Status(status)),
+                            _ => continue,
                         }
                     }
-                    _ => continue,
+                    return Err(UbusError::InvalidData("Invalid status message"));
+                }
+                UbusCmdType::DATA => {
+                    for attr in attrs {
+                        dbg!(&attr);
+                        match attr {
+                            UbusMsgAttr::ObjPath(path) => obj.path = path.to_string(),
+                            UbusMsgAttr::ObjId(id) => obj.id = id,
+                            UbusMsgAttr::ObjType(ty) => obj.ty = ty,
+                            UbusMsgAttr::Signature(nested) => {
+                                for item in nested {
+                                    let signature = Method {
+                                        name: item.0.to_string(),
+                                        policy: if let BlobMsgPayload::Table(table) = item.1 {
+                                            table
+                                                .iter()
+                                                .map(|(k, v)| {
+                                                    if let BlobMsgPayload::Int32(typeid) = *v {
+                                                        (
+                                                            k.to_string(),
+                                                            BlobMsgType::from(typeid as u32),
+                                                        )
+                                                    } else {
+                                                        panic!()
+                                                    }
+                                                })
+                                                .collect()
+                                        } else {
+                                            panic!()
+                                        },
+                                    };
+                                    obj.methods.insert(item.0.to_string(), signature);
+                                }
+                            }
+                            _ => continue,
+                        }
+                    }
+                }
+                _ => {
+                    continue;
                 }
             }
-            on_object(obj);
         }
     }
 

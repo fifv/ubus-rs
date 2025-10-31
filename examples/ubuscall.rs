@@ -18,6 +18,8 @@ fn main() {
         data = &args[3];
     }
 
+    dbg!(&data);
+
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
     let mut connection = match ubus::Connection::connect(&socket) {
@@ -27,8 +29,14 @@ fn main() {
             return;
         }
     };
-    let json = connection.call(obj_path, method, data).unwrap();
-    let parsed: Value = serde_json::from_str(&json).unwrap();
-    let pretty_json = to_string_pretty(&parsed).unwrap();
-    println!("{}", pretty_json);
+    match connection.call(obj_path, method, data) {
+        Ok(json) => {
+            let parsed: Value = serde_json::from_str(&json).unwrap();
+            let pretty_json = to_string_pretty(&parsed).unwrap();
+            println!("{}", pretty_json);
+        }
+        Err(e) => {
+            eprintln!("Failed to call, with error: {}", e)
+        }
+    }
 }

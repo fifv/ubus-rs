@@ -28,7 +28,7 @@ macro_rules! values {
     ) => {
         #[repr(transparent)]
         #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-        $vis struct $name($repr);
+        $vis struct $name(pub $repr);
         impl $name {
             $( pub const $variant: Self = Self($value); )*
             pub fn known(self) -> bool {
@@ -47,6 +47,14 @@ macro_rules! values {
             }
         }
         impl core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+                match *self {
+                    $( Self::$variant => write!(f, stringify!($variant)), )*
+                    unknown => write!(f, "UNKNOWN({})", unknown.0),
+                }
+            }
+        }
+        impl core::fmt::Display for $name {
             fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
                 match *self {
                     $( Self::$variant => write!(f, stringify!($variant)), )*

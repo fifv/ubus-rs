@@ -1,0 +1,98 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        
+        {
+            "label": "cargo build examples",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "build",
+                // "--release",
+                "--target=armv7-unknown-linux-musleabihf",
+                "--example='*'"
+            ],
+            "dependsOn":[],
+            "problemMatcher": [ ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        },
+        {
+            "label": "scp to sdk",
+            "type": "shell",
+            "command": "scp",
+            "args": [
+                "target/armv7-unknown-linux-musleabihf/release/pm",
+                "Ubuntu18:/home/fifv/v853/v853-sdk-test/target/allwinner/v853-vision/busybox-init-base-files/usr/bin",
+            ],
+            "dependsOn":["cargo build examples"],
+            "problemMatcher": [ ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        },
+        {
+            "label": "cp to sdk",
+            "type": "shell",
+            "command": "cp",
+            "args": [
+                "target/armv7-unknown-linux-musleabihf/release/pm",
+                "/home/fifv/v853/v853-sdk-test/target/allwinner/v853-vision/busybox-init-base-files/usr/bin",
+            ],
+            "dependsOn":["cargo build examples"],
+            "problemMatcher": [ ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        },
+        {
+            "label": "adb push",
+            "type": "shell",
+            "command": "adb",
+            "args": [
+                "push",
+                "target/armv7-unknown-linux-musleabihf/debug/examples/ubuscall",
+                "/mnt/UDISK/"
+            ],
+            "dependsOn":["cargo build examples"],
+            "problemMatcher": [ ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "push both",
+            "type": "shell",
+            "command": "",
+            "dependsOn":["adb push", "cp to sdk"],
+            "problemMatcher": [ ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        },
+        {
+            "label": "adb shell run",
+            "type": "shell",
+            "command": "adb",
+            "args": [
+                "shell",
+                // "/tmp/ttt",
+                "/try-camerademo",
+            ],
+            "dependsOn":["adb push"],
+            "problemMatcher": [ ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        }
+    ]
+}

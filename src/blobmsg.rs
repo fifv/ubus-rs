@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, string::String};
 use std::fmt;
 use std::vec::Vec;
 
@@ -18,20 +18,20 @@ values!(pub BlobMsgType(u32) {
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum BlobMsgPayload<'a> {
-    Array(Vec<BlobMsg<'a>>),
-    Table(HashMap<&'a str, BlobMsgPayload<'a>>),
-    String(&'a str),
+pub enum BlobMsgPayload {
+    Array(Vec<BlobMsg>),
+    Table(HashMap<String, BlobMsgPayload>),
+    String(String),
     Int64(i64),
     Int32(i32),
     Int16(i16),
     Int8(i8),
     Bool(i8),
     Double(f64),
-    Unknown(u32, &'a [u8]),
+    Unknown(u32, Vec<u8>),
 }
 
-impl fmt::Display for BlobMsgPayload<'_> {
+impl fmt::Display for BlobMsgPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BlobMsgPayload::Array(list) => write!(f, "{}", List(list)),
@@ -50,7 +50,7 @@ impl fmt::Display for BlobMsgPayload<'_> {
     }
 }
 
-struct List<'a>(&'a Vec<BlobMsg<'a>>);
+struct List<'a>(&'a Vec<BlobMsg>);
 impl<'a> fmt::Display for List<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
@@ -68,7 +68,7 @@ impl<'a> fmt::Display for List<'a> {
     }
 }
 
-struct Dict<'a>(&'a HashMap<&'a str, BlobMsgPayload<'a>>);
+struct Dict<'a>(&'a HashMap<String, BlobMsgPayload>);
 impl<'a> fmt::Display for Dict<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{")?;
@@ -87,12 +87,12 @@ impl<'a> fmt::Display for Dict<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobMsg<'a> {
-    pub name: &'a str,
-    pub data: BlobMsgPayload<'a>,
+pub struct BlobMsg {
+    pub name: String,
+    pub data: BlobMsgPayload,
 }
 
-impl fmt::Display for BlobMsg<'_> {
+impl fmt::Display for BlobMsg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.name.len() > 0 {
             write!(f, "\"{}\": {}", self.name, self.data)

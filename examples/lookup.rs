@@ -19,7 +19,7 @@ fn main() {
     };
     let obj_json = serde_json::to_string_pretty(&connection.lookup(obj_path).unwrap()).unwrap();
 
-    // println!("{}", obj_json);
+    println!("{}", obj_json);
     let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
     // println!("{:?}", obj);
 }

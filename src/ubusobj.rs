@@ -19,31 +19,31 @@ pub struct UbusObject {
 }
 
 impl<'a> UbusObject {
-    pub fn args_from_json(&self, method: &'a str, json: &'a str) -> Result<Vec<u8>, UbusError> {
-        let mut args = Vec::new();
-        if json.len() == 0 {
-            return Ok(args);
-        }
-        match serde_json::from_str::<Value>(json) {
-            Ok(value) => {
-                if let Some(object) = value.as_object() {
-                    let method = self
-                        .methods
-                        .get(method)
-                        .ok_or(UbusError::InvalidMethod(method.to_string()))?;
-                    // TODO:
-                    for (k, v) in object.iter() {
-                        let mut builder =
-                            BlobMsgBuilder::new_extended(BlobMsgType::INT32, "wtf this name?");
+    // pub fn args_from_json(&self, method: &'a str, json: &'a str) -> Result<Vec<u8>, UbusError> {
+    //     let mut args = Vec::new();
+    //     if json.len() == 0 {
+    //         return Ok(args);
+    //     }
+    //     match serde_json::from_str::<Value>(json) {
+    //         Ok(value) => {
+    //             if let Some(object) = value.as_object() {
+    //                 let method = self
+    //                     .methods
+    //                     .get(method)
+    //                     .ok_or(UbusError::InvalidMethod(method.to_string()))?;
+    //                 // TODO:
+    //                 for (k, v) in object.iter() {
+    //                     let mut builder =
+    //                         BlobMsgBuilder::new_extended(BlobMsgType::INT32, "wtf this name?");
 
-                        builder.push_double(1243123.43)?;
+    //                     builder.push_double(1243123.43)?;
 
-                        args.extend_from_slice(builder.data())
-                    }
-                }
-                Ok(args)
-            }
-            Err(e) => Err(UbusError::ParseArguments(e)),
-        }
-    }
+    //                     args.extend_from_slice(builder.data())
+    //                 }
+    //             }
+    //             Ok(args)
+    //         }
+    //         Err(e) => Err(UbusError::ParseArguments(e)),
+    //     }
+    // }
 }

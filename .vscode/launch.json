@@ -7,260 +7,169 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'c'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=c",
-                    "--package=try-rust"
-                ],
-                "filter": {
-                    "name": "c",
-                    "kind": "bin"
-                }
-            },
-            "args": [ ],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'c'",
+            "name": "Debug unit tests in library 'ubus'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=c",
-                    "--package=try-rust"
+                    "--lib",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "c",
-                    "kind": "bin"
+                    "name": "ubus",
+                    "kind": "lib"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'pm'",
+            "name": "Debug example 'invoke'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=pm",
-                    "--package=try-rust",
+                    "--example=invoke",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "pm",
-                    "kind": "bin"
+                    "name": "invoke",
+                    "kind": "example"
                 }
             },
-            "args": [ "daemon", ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'pm'",
+            "name": "Debug unit tests in example 'invoke'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=pm",
-                    "--package=try-rust"
+                    "--example=invoke",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "pm",
-                    "kind": "bin"
+                    "name": "invoke",
+                    "kind": "example"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'try-file'",
+            "name": "Debug example 'lookup'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=try-file",
-                    "--package=try-rust"
+                    "--example=lookup",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "try-file",
-                    "kind": "bin"
+                    "name": "lookup",
+                    "kind": "example"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'try-file'",
+            "name": "Debug unit tests in example 'lookup'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=try-file",
-                    "--package=try-rust"
+                    "--example=lookup",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "try-file",
-                    "kind": "bin"
+                    "name": "lookup",
+                    "kind": "example"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'try-lock'",
+            "name": "Debug example 'ubuscall'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=try-lock",
-                    "--package=try-rust"
+                    "--example=ubuscall",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "try-lock",
-                    "kind": "bin"
+                    "name": "ubuscall",
+                    "kind": "example"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'try-lock'",
+            "name": "Debug unit tests in example 'ubuscall'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=try-lock",
-                    "--package=try-rust"
+                    "--example=ubuscall",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "try-lock",
-                    "kind": "bin"
+                    "name": "ubuscall",
+                    "kind": "example"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'try-process'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=try-process",
-                    "--package=try-rust"
-                ],
-                "filter": {
-                    "name": "try-process",
-                    "kind": "bin"
-                }
-            },
-            "args": [ ],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'try-process'",
+            "name": "Debug integration test 'invoke'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=try-process",
-                    "--package=try-rust"
+                    "--test=invoke",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "try-process",
-                    "kind": "bin"
+                    "name": "invoke",
+                    "kind": "test"
                 }
             },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'try-rust'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=try-rust",
-                    "--package=try-rust"
-                ],
-                "filter": {
-                    "name": "try-rust",
-                    "kind": "bin"
-                }
-            },
-            "args": [ ],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'try-rust'",
+            "name": "Debug integration test 'list'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=try-rust",
-                    "--package=try-rust"
+                    "--test=list",
+                    "--package=ubus"
                 ],
                 "filter": {
-                    "name": "try-rust",
-                    "kind": "bin"
+                    "name": "list",
+                    "kind": "test"
                 }
             },
-            "args": [ ],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug executable 'try-slice'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=try-slice",
-                    "--package=try-rust"
-                ],
-                "filter": {
-                    "name": "try-slice",
-                    "kind": "bin"
-                }
-            },
-            "args": [ ],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'try-slice'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--bin=try-slice",
-                    "--package=try-rust"
-                ],
-                "filter": {
-                    "name": "try-slice",
-                    "kind": "bin"
-                }
-            },
-            "args": [ ],
+            "args": [],
             "cwd": "${workspaceFolder}"
         }
     ]

@@ -12,19 +12,16 @@ fn test() {
         let mut command = [0u8; 12];
         server.read_exact(&mut command).unwrap();
         assert_eq!(command, TEST_TX);
-        for i in TEST_RX {
-            server.write_all(i).unwrap();
-        }
+        // for i in TEST_RX {
+        //     server.write_all(i).unwrap();
+        // }
     });
 
     let mut connection = Connection::new(client).unwrap();
 
-    connection
+    let obj = connection
         .lookup(
             "",
-            |obj| {
-                println!("\n{:?}", obj);
-            },
             /*             |sig| {
                 print!("  {}(", sig.name);
                 for (name, ty) in sig.args {
@@ -34,6 +31,7 @@ fn test() {
             }, */
         )
         .unwrap();
+    println!("\n{:?}", obj);
 }
 
 // Data dumped from `ubus list`

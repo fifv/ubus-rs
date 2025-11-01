@@ -1,5 +1,7 @@
 #![no_std]
 #![allow(dead_code)]
+#![feature(iterator_try_collect)]
+
 
 #[cfg(not(no_std))]
 extern crate std;

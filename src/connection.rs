@@ -84,13 +84,13 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj: u32,
         method: &str,
-        req_args: Vec<BlobMsg>,
-    ) -> Result<Vec<BlobMsg>, UbusError> {
+        req_args: MsgTable,
+    ) -> Result<MsgTable, UbusError> {
         let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
         let req_blobs: Vec<UbusBlob> = vec![
             UbusBlob::ObjId(obj as i32),
             UbusBlob::Method(method.to_string()),
-            UbusBlob::Data(req_args.to_vec()),
+            UbusBlob::Data(req_args),
         ];
         let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
         // let mut message = UbusMsg::new(&header).unwrap();
@@ -101,7 +101,7 @@ impl<T: IO> Connection<T> {
 
         self.send(message)?;
 
-        let mut res_args: Vec<BlobMsg> = Vec::new();
+        let mut res_args = MsgTable::new();
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'messages: loop {
             let message = self.next_message()?;
@@ -118,7 +118,9 @@ impl<T: IO> Connection<T> {
                             UbusBlob::Status(UbusMsgStatus::OK) => {
                                 break 'messages Ok(res_args);
                             }
-                            UbusBlob::Status(status) => return Err(UbusError::Status(status)),
+                            UbusBlob::Status(status) => {
+                                return Err(UbusError::Status(status));
+                            }
                             _ => continue,
                         }
                     }
@@ -153,7 +155,7 @@ impl<T: IO> Connection<T> {
         let obj: UbusObject = serde_json::from_str(&obj_json)?;
         // dbg!(&obj);
         // let req_args = obj.args_from_json(method, args).expect("not valid json");
-        let req_args = json_to_args(req_args).unwrap();
+        let req_args = MsgTable::try_from(req_args).unwrap();
         // dbg!(&args, &req_args);
         let res_args = self.invoke(obj.id, method, req_args)?;
 
@@ -162,7 +164,7 @@ impl<T: IO> Connection<T> {
             let mut json = String::new();
             json += "{\n";
             let mut first = true;
-            for msg in res_args {
+            for msg in res_args.0 {
                 // dbg!(&msg);
                 if !first {
                     json += ",\n";
@@ -269,7 +271,12 @@ impl<T: IO> Connection<T> {
     pub fn lookup(&mut self, obj_path: &str) -> Result<UbusObject, UbusError> {
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
 
-        let req_blobs: Vec<UbusBlob> = obj_path.is_empty().not().then(|| UbusBlob::ObjPath(obj_path.to_string())).into_iter().collect();
+        let req_blobs: Vec<UbusBlob> = obj_path
+            .is_empty()
+            .not()
+            .then(|| UbusBlob::ObjPath(obj_path.to_string()))
+            .into_iter()
+            .collect();
 
 
         let request = UbusMsg::from_header_and_blobs(&header, req_blobs);
@@ -279,7 +286,7 @@ impl<T: IO> Connection<T> {
 
         'message_iter: loop {
             let message = self.next_message()?;
-            dbg!(&message);
+            dbg!(&message, &message.blobs);
             if message.header.sequence != header.sequence {
                 continue;
             }
@@ -293,8 +300,12 @@ impl<T: IO> Connection<T> {
                     for blob in message.blobs {
                         dbg!(&blob);
                         match blob {
-                            UbusBlob::Status(UbusMsgStatus::OK) => break 'message_iter Ok(obj),
-                            UbusBlob::Status(status) => return Err(UbusError::Status(status)),
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                break 'message_iter Ok(obj);
+                            }
+                            UbusBlob::Status(status) => {
+                                return Err(UbusError::Status(status));
+                            }
                             _ => continue,
                         }
                     }
@@ -302,20 +313,22 @@ impl<T: IO> Connection<T> {
                 }
                 UbusCmdType::DATA => {
                     for blob in message.blobs {
-                        dbg!(&blob);
                         match blob {
                             UbusBlob::ObjPath(path) => obj.path = path.to_string(),
                             UbusBlob::ObjId(id) => obj.id = id as u32,
                             UbusBlob::ObjType(ty) => obj.ty = ty as u32,
                             UbusBlob::Signature(nested) => {
-                                for item in nested {
+                                // dbg!(&nested);
+                                for item in nested.0 {
                                     let signature = Method {
                                         name: item.name.to_string(),
                                         policy: if let BlobMsgPayload::Table(table) = item.data {
                                             table
                                                 .iter()
                                                 .map(|blogmsg| {
-                                                    if let BlobMsgPayload::Int32(typeid) = blogmsg.data {
+                                                    if let BlobMsgPayload::Int32(typeid) =
+                                                        blogmsg.data
+                                                    {
                                                         (
                                                             blogmsg.name.to_string(),
                                                             BlobMsgType::from(typeid as u32),

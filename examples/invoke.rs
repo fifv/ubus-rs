@@ -20,27 +20,30 @@ fn main() {
             err
         })
         .unwrap();
-    let obj = connection.lookup(obj_path).unwrap();
+    let objs = connection.lookup(obj_path).unwrap();
+    let obj = objs.get(0).unwrap();
     dbg!("{}", &obj);
     // let obj: UbusObject = serde_json::from_str(&obj).unwrap();
     let req_args = MsgTable::try_from(req_args).unwrap();
-    let bi = connection.invoke(obj.id, method, req_args).unwrap();
+    let res_args = connection.invoke(obj.id, method, req_args).unwrap();
+    println!("{}", String::try_from(res_args).unwrap());
+
     // Value::from(bi);
-    let json_str = {
-        let mut json_str = String::new();
-        json_str = "{\n".to_string();
-        let mut first = true;
-        for x in bi.0 {
-            if !first {
-                json_str += ",\n";
-            }
-            //json_str += &format!("{:?}", x);
-            let msg: BlobMsg = x.try_into().unwrap();
-            json_str += &format!("{}", msg);
-            first = false;
-        }
-        json_str += "\n}";
-        json_str
-    };
-    println!("{}", json_str);
+    // let json_str = {
+    //     let mut json_str = String::new();
+    //     json_str = "{\n".to_string();
+    //     let mut first = true;
+    //     for x in res_args.0 {
+    //         if !first {
+    //             json_str += ",\n";
+    //         }
+    //         //json_str += &format!("{:?}", x);
+    //         let msg: BlobMsg = x.try_into().unwrap();
+    //         json_str += &format!("{}", msg);
+    //         first = false;
+    //     }
+    //     json_str += "\n}";
+    //     json_str
+    // };
+    // println!("{}", json_str);
 }

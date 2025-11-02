@@ -207,6 +207,11 @@ impl TryFrom<BlobMsgPayload> for Value {
 pub struct MsgTable(pub Vec<BlobMsg>);
 impl MsgTable {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+impl Default for MsgTable {
+    fn default() -> Self {
         Self(Vec::new())
     }
 }

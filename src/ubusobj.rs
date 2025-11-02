@@ -5,17 +5,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::ToOwned, collections::HashMap, dbg, string::String};
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct Method {
-    pub name: String,
-    pub policy: HashMap<String, BlobMsgType>,
-}
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub type MethodCallback = fn(req_args: &MsgTable) -> MsgTable;
+// #[derive(Default, Debug, Clone, Serialize, Deserialize)]
+// pub struct Method {
+//     pub name: String,
+//     pub policy: HashMap<String, BlobMsgType>,
+// }
+#[derive(Default, Debug, Clone)]
 pub struct UbusObject {
     pub path: String,
     pub id: u32,
-    pub ty: u32,
-    pub methods: HashMap<String, Method>,
+    pub objtype: u32,
+    /**
+     * used on server side object, the actually callbacks
+     */
+    pub methods: HashMap<String, MethodCallback>,
+    /**
+     * used on client side lookup, store what the server says
+     */
+    pub reported_signature: MsgTable,
 }
 
 impl<'a> UbusObject {

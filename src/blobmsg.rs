@@ -245,14 +245,12 @@ impl TryFrom<Blob> for BlobMsg {
 impl TryFrom<&str> for MsgTable {
     type Error = UbusError;
     fn try_from(json: &str) -> Result<Self, Self::Error> {
-        // top-level MUST be object/array to produce args
-        match serde_json::from_str(json).expect("Invalid JSON") {
-            // Value::Object(map) => map.try_into(),
-            Value::Object(map) => map.try_into(),
-            _ => Err(UbusError::InvalidData(
-                "Invalid JSON, must be object at top-level",
-            )),
+        /* empty string is legal */
+        if json.is_empty() {
+            return Ok(MsgTable::new());
         }
+        // top-level MUST be object/array to produce args
+        serde_json::from_str::<Value>(json)?.try_into()
     }
 }
 impl TryFrom<JsonObject> for MsgTable {
@@ -267,6 +265,17 @@ impl TryFrom<JsonObject> for MsgTable {
                 })
                 .collect(),
         ))
+    }
+}
+impl TryFrom<Value> for MsgTable {
+    type Error = UbusError;
+    fn try_from(json_value: Value) -> Result<Self, Self::Error> {
+        match json_value {
+            Value::Object(map) => map.try_into(),
+            _ => Err(UbusError::InvalidData(
+                "Invalid JSON, must be object at top-level",
+            )),
+        }
     }
 }
 
@@ -476,7 +485,6 @@ impl BlobMsgBuilder {
         builder.push_str(data)?;
         Ok(builder)
     }
-
 
     pub fn tag(&self) -> BlobTag {
         let tag_bytes: [u8; BlobTag::SIZE] = self.buffer[..BlobTag::SIZE].try_into().unwrap();

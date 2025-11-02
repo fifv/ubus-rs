@@ -105,14 +105,17 @@
                 "args": [
                     "build",
                     "--example=ubuscall",
-                    "--package=ubus"
+                    "--package=ubus",
                 ],
                 "filter": {
                     "name": "ubuscall",
                     "kind": "example"
                 }
             },
-            "args": [],
+            "args": [
+                    "test",
+                    "hello",
+            ],
             "cwd": "${workspaceFolder}"
         },
         {

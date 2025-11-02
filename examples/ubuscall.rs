@@ -37,7 +37,8 @@ fn main() {
             println!("{}", pretty_json);
         }
         Err(e) => {
-            eprintln!("Failed to call, with error: {}", e)
+            eprintln!("Failed to call, with error: {}", e);
+            // panic!()
         }
     }
 }

@@ -1,10 +1,10 @@
-use std::{env, path::Path};
+use std::{env, path::Path, thread::sleep, time::Duration};
 
 use ubus::{UbusError, UbusObject};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let mut obj_path = "";
+    let mut obj_path = "ttt";
     if args.len() > 1 {
         obj_path = args[1].as_str();
     }
@@ -17,10 +17,8 @@ fn main() {
             return;
         }
     };
-    let obj_json = connection.lookup(obj_path).unwrap();
-    let obj_json = serde_json::to_string_pretty(&obj_json).unwrap();
-
-    println!("{}", &obj_json);
-    // let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
+    let (id, objtype) = connection.add_server(obj_path, &[("hi", || {})]).unwrap();
+    // connection.listening(id).unwrap();
+    sleep(Duration::from_millis(1000000));
     // println!("{:?}", obj);
 }

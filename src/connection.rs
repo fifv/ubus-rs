@@ -2,10 +2,13 @@ use crate::*;
 
 use core::ops::Not;
 use core::panic;
+use core::time::Duration;
 use std::println;
+use std::thread::sleep;
 use std::{borrow::ToOwned, collections::HashMap, dbg, string::ToString, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
+use serde_json::json;
 use std::format;
 use std::vec;
 use ubuserror::*;
@@ -89,7 +92,7 @@ impl<T: IO> Connection<T> {
     ) -> Result<MsgTable, UbusError> {
         let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
         let req_blobs: Vec<UbusBlob> = vec![
-            UbusBlob::ObjId(obj as i32),
+            UbusBlob::ObjId(obj),
             UbusBlob::Method(method.to_string()),
             UbusBlob::Data(req_args),
         ];
@@ -102,12 +105,14 @@ impl<T: IO> Connection<T> {
 
         self.send(message)?;
 
+        // FIXME: use Option<>
         let mut res_args = MsgTable::new();
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'messages: loop {
             let message = self.next_message()?;
             if message.header.sequence != header.sequence {
-                continue;
+                // FIXME:
+                // continue;
             }
             dbg!(&message);
 
@@ -121,7 +126,7 @@ impl<T: IO> Connection<T> {
                             UbusBlob::Status(status) => {
                                 return Err(UbusError::Status(status));
                             }
-                            _ => continue,
+                            _ => {}
                         }
                     }
                     return Err(UbusError::InvalidData("Invalid status message"));
@@ -150,14 +155,15 @@ impl<T: IO> Connection<T> {
         method: &'a str,
         req_args: &'a str,
     ) -> Result<String, UbusError> {
-        let obj_json = self.lookup_object_json(obj_path)?;
-        // dbg!(&obj_json);
-        let obj: UbusObject = serde_json::from_str(&obj_json)?;
+        // let obj_json = self.lookup_object_json(obj_path)?;
+        // // dbg!(&obj_json);
+        // let obj: UbusObject = serde_json::from_str(&obj_json)?;
         // dbg!(&obj);
         // let req_args = obj.args_from_json(method, args).expect("not valid json");
+        let obj_id = self.lookup_id(obj_path)?;
         let req_args = MsgTable::try_from(req_args).unwrap();
         // dbg!(&args, &req_args);
-        let res_args = self.invoke(obj.id, method, req_args)?;
+        let res_args = self.invoke(obj_id, method, req_args)?;
 
         Ok(dbg!(res_args.try_into()?))
 
@@ -183,16 +189,19 @@ impl<T: IO> Connection<T> {
     }
 
     pub fn lookup_object_json<'a>(&'a mut self, obj_path: &'a str) -> Result<String, UbusError> {
-        serde_json::to_string_pretty(&self.lookup(obj_path)?)
+        serde_json::to_string_pretty(&self.lookup(obj_path)?.get(0))
             .map_err(|e| UbusError::InvalidData("Failed to stringify"))
     }
 
-
     pub fn lookup_id(&mut self, obj_path: &str) -> Result<u32, UbusError> {
-        Ok(self.lookup(obj_path)?.id)
+        Ok(self
+            .lookup(obj_path)?
+            .get(0)
+            .ok_or(UbusError::InvalidPath(obj_path.to_string()))?
+            .id)
     }
 
-    pub fn lookup(&mut self, obj_path: &str) -> Result<UbusObject, UbusError> {
+    pub fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
         let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
 
         let req_blobs: Vec<UbusBlob> = obj_path
@@ -205,7 +214,8 @@ impl<T: IO> Connection<T> {
         let request = UbusMsg::from_header_and_blobs(&header, req_blobs);
         self.send(request)?;
 
-        let mut obj = UbusObject::default();
+        // FIXME: use Option<>
+        let mut objs = Vec::new();
 
         'message_iter: loop {
             let message = self.next_message()?;
@@ -217,6 +227,7 @@ impl<T: IO> Connection<T> {
 
             /* here the `obj` is inserted with some reference from `message`, then if we try to return it, rust ensure `message` should live longer than `obj`   */
             /* i check the code, message is a lot of slice to a global buffer in Connection, each time next_message() got called, the global buffer got overriden */
+            let mut obj = UbusObject::default();
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
@@ -224,12 +235,12 @@ impl<T: IO> Connection<T> {
                         // dbg!(&blob);
                         match blob {
                             UbusBlob::Status(UbusMsgStatus::OK) => {
-                                break 'message_iter Ok(obj);
+                                break 'message_iter Ok(objs);
                             }
                             UbusBlob::Status(status) => {
                                 return Err(UbusError::Status(status));
                             }
-                            _ => continue,
+                            _ => {}
                         }
                     }
                     return Err(UbusError::InvalidData("Invalid status message"));
@@ -268,15 +279,155 @@ impl<T: IO> Connection<T> {
                                     obj.methods.insert(item.name.to_string(), signature);
                                 }
                             }
-                            _ => continue,
+                            _ => {}
                         }
                     }
+                    objs.push(obj);
                 }
-                _ => {
-                    continue;
-                }
+                _ => {}
             }
         }
     }
 
+    /**
+     * send:        add_object: {"objpath":"test","signature":{"hello":{"id":5,"msg":3},"watch":{"id":5,"counter":5},"count":{"to":5,"string":3}}}
+     * return:      data:       {"objid":2013531835,"objtype":-1292016789}
+     */
+    pub fn add_server(
+        &mut self,
+        obj_path: &str,
+        methods: &[(&str, fn())],
+    ) -> Result<(u32, u32), UbusError> {
+        let header = self.header_by_obj_cmd(0, UbusCmdType::ADD_OBJECT);
+        let req_blobs: Vec<UbusBlob> = vec![
+            UbusBlob::ObjPath(obj_path.to_string()),
+            UbusBlob::Signature(
+                methods
+                    .iter()
+                    .map(|(method, cb)| BlobMsg {
+                        name: method.to_string(),
+                        data: BlobMsgPayload::Table(Vec::new()),
+                    })
+                    .collect::<Vec<BlobMsg>>()
+                    .into(),
+            ),
+        ];
+        let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
+        self.send(message)?;
+
+        let mut res_args = (0, 0);
+
+        /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
+        let res_args = 'message_loop: loop {
+            let message = self.next_message()?;
+            if message.header.sequence != header.sequence {
+                continue;
+            }
+            dbg!(&message);
+
+            match message.header.cmd_type {
+                UbusCmdType::STATUS => {
+                    for blob in message.ubus_blobs {
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                break 'message_loop Ok(res_args);
+                            }
+                            UbusBlob::Status(status) => {
+                                break 'message_loop Err(UbusError::Status(status));
+                            }
+                            _ => {}
+                        }
+                    }
+                    break 'message_loop Err(UbusError::InvalidData("Invalid status message"));
+                }
+                UbusCmdType::DATA => {
+                    for blob in message.ubus_blobs {
+                        // dbg!(&blob);
+                        match blob {
+                            UbusBlob::ObjId(id) => res_args.0 = id,
+                            UbusBlob::ObjType(objtype) => res_args.1 = objtype,
+                            _ => todo!(),
+                        }
+                    }
+                }
+                unknown => {
+                    dbg!(unknown);
+                }
+            }
+        };
+
+        /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
+        'message_loop: loop {
+            let message = self.next_message()?;
+            // if message.header.sequence != header.sequence {
+            //     continue;
+            // }
+            dbg!(&message);
+            let peer: u32 = message.header.peer.into();
+
+            match message.header.cmd_type {
+                UbusCmdType::STATUS => {
+                    for blob in message.ubus_blobs {
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                // break 'messages Ok(());
+                            }
+                            UbusBlob::Status(status) => {
+                                return Err(UbusError::Status(status));
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Err(UbusError::InvalidData("Invalid status message"));
+                }
+                UbusCmdType::INVOKE => {
+                    // TODO: use Option
+                    let mut client_obj_id = 0;
+                    for blob in message.ubus_blobs {
+                        // dbg!(&blob);
+                        match blob {
+                            UbusBlob::ObjId(id) => client_obj_id = id,
+                            UbusBlob::Method(_) => {}
+                            UbusBlob::Data(msg_table) => {}
+                            _ => {}
+                        }
+                    }
+
+                    /* here client_obj_id == server objid */
+                    let header = self.header_by_obj_cmd(peer, UbusCmdType::DATA);
+                    let req_blobs: Vec<UbusBlob> = vec![
+                        UbusBlob::ObjId(client_obj_id),
+                        UbusBlob::Data(MsgTable::try_from(json!({
+                            "wtf": 1
+                        }))?),
+                    ];
+                    let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
+                    self.send(message)?;
+
+                    sleep(Duration::from_millis(40));
+
+                    let header = self.header_by_obj_cmd(peer, UbusCmdType::STATUS);
+                    let req_blobs: Vec<UbusBlob> = vec![
+                        UbusBlob::ObjId(client_obj_id),
+                        UbusBlob::Status(UbusMsgStatus::OK),
+                    ];
+                    let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
+                    self.send(message)?;
+                }
+                unknown => {
+                    dbg!(unknown);
+                }
+            }
+        }
+        res_args
+    }
+
+    /*
+     * server:
+     * receive: invoke: {"objid":2013531835,"method":"hello","data":{"msg":"fsdfsdf"},"user":"fifv","group":"fifv"}
+     * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
+     * reply:   status: {"status":0,"objid":2013531835}
+     */
+    // pub fn listening(&mut self, objid: u32) -> Result<(), UbusError> {
+    // }
 }

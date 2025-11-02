@@ -25,4 +25,6 @@ pub enum UbusError {
     InvalidMethod(String),
     #[error("Invalid blog type:{0}")]
     InvalidBlobType(UbusBlobType),
+    #[error("No such path:{0}")]
+    InvalidPath(String),
 }

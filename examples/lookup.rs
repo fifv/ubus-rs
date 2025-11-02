@@ -17,9 +17,10 @@ fn main() {
             return;
         }
     };
-    let obj_json = serde_json::to_string_pretty(&connection.lookup(obj_path).unwrap()).unwrap();
+    let obj_json = connection.lookup(obj_path).unwrap();
+    let obj_json = serde_json::to_string_pretty(&obj_json).unwrap();
 
-    println!("{}", obj_json);
+    println!("{}", &obj_json);
     let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
     // println!("{:?}", obj);
 }

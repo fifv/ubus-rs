@@ -1,17 +1,10 @@
-use crate::{
-    Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, IO, UbusBlob, BlobPayloadParser,
-    UbusBlobType, UbusError,
-};
+use crate::{BlobIter, BlobTag, IO, UbusBlob, UbusBlobType, UbusError};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
 use serde::{Deserialize, Serialize};
-use std::borrow::ToOwned;
-use std::collections::HashMap;
-use std::string::String;
+use std::vec;
 use std::vec::Vec;
-use std::{dbg, vec};
 use storage_endian::{BEu16, BEu32};
-
 
 values!(pub UbusMsgVersion(u8) {
     CURRENT = 0x00,
@@ -31,7 +24,6 @@ values!(pub UbusCmdType(u8) {
     NOTIFY          = 0x10,
     MONITOR         = 0x11,
 });
-
 
 values!(pub UbusMsgStatus(i32) {
     OK                    = 0x00,
@@ -78,7 +70,6 @@ pub struct UbusMsg {
     pub ubus_blobs: Vec<UbusBlob>,
 }
 
-
 impl UbusMsg {
     pub fn from_io<T: IO>(io: &mut T) -> Result<Self, UbusError> {
         /* read ubus message header */
@@ -117,7 +108,6 @@ impl UbusMsg {
     pub fn to_bytes(self) -> Vec<u8> {
         let ubusmsg_header_buf = self.header.to_bytes();
 
-
         let mut ubusmsg_blobs_buffer = Vec::new();
         for blob in self.ubus_blobs {
             ubusmsg_blobs_buffer.extend_from_slice(&blob.to_bytes());
@@ -130,7 +120,6 @@ impl UbusMsg {
         )
         .expect("???")
         .to_bytes();
-
 
         let mut raw_msg_data = Vec::new();
         raw_msg_data.extend_from_slice(&ubusmsg_header_buf);
@@ -147,126 +136,5 @@ impl core::fmt::Debug for UbusMsg {
             "Message({:?} seq={}, peer={:08x}, blobs={:?})",
             self.header.cmd_type, self.header.sequence, self.header.peer, self.ubus_blobs
         )
-
-        // writeln!(
-        //     f,
-        //     "Message({:?} seq={}, peer={:08x}, blobs=[",
-        //     self.header.cmd_type, self.header.sequence, self.header.peer
-        // )?;
-        // for blob in &self.ubus_blobs {
-        //     writeln!(f, "    {:?},", blob)?;
-        // }
-        // write!(f, "])",)
     }
 }
-
-// impl Into<Vec<u8>> for UbusMsg {
-
-// }
-
-// pub struct UbusMsgBuilder___ {
-//     buffer: Vec<u8>,
-//     offset: usize,
-// }
-
-// impl UbusMsgBuilder___ {
-//     pub fn new(header: &UbusMsgHeader) -> Result<Self, UbusError> {
-//         let mut buffer = Vec::new();
-//         valid_data!(
-//             buffer.len() >= (UbusMsgHeader::SIZE + BlobTag::SIZE),
-//             "Builder buffer is too small"
-//         );
-
-//         let header_buf = &mut buffer[..UbusMsgHeader::SIZE];
-//         let header_buf: &mut [u8; UbusMsgHeader::SIZE] = header_buf.try_into().unwrap();
-//         *header_buf = header.to_bytes();
-
-//         let offset = UbusMsgHeader::SIZE + BlobTag::SIZE;
-
-//         Ok(Self { buffer, offset })
-//     }
-
-//     pub fn put(&mut self, attr: UbusMsgAttr___) -> Result<(), UbusError> {
-//         let mut blob = BlobBuilder::from_bytes(&mut self.buffer[self.offset..]);
-
-//         match attr {
-//             UbusMsgAttr___::Status(val) => blob.push_u32(UbusBlobType::STATUS, val.0 as u32)?,
-//             UbusMsgAttr___::ObjPath(val) => blob.push_str(UbusBlobType::OBJPATH, &val)?,
-//             UbusMsgAttr___::ObjId(val) => blob.push_u32(UbusBlobType::OBJID, val)?,
-//             UbusMsgAttr___::Method(val) => blob.push_str(UbusBlobType::METHOD, &val)?,
-//             //UbusMsgAttr::ObjType(val) => blob.push_u32(BlobAttrId::STATUS, &val)?,
-//             UbusMsgAttr___::ObjType(val) => blob.push_u32(UbusBlobType::OBJTYPE, val)?,
-//             UbusMsgAttr___::Signature(_) => unimplemented!(),
-//             UbusMsgAttr___::Data(val) => blob.push_bytes(UbusBlobType::DATA, &val)?,
-//             UbusMsgAttr___::Target(val) => blob.push_u32(UbusBlobType::TARGET, val)?,
-//             UbusMsgAttr___::Active(val) => blob.push_bool(UbusBlobType::ACTIVE, val)?,
-//             UbusMsgAttr___::NoReply(val) => blob.push_bool(UbusBlobType::NO_REPLY, val)?,
-//             UbusMsgAttr___::Subscribers(_) => unimplemented!(),
-//             UbusMsgAttr___::User(val) => blob.push_str(UbusBlobType::USER, &val)?,
-//             UbusMsgAttr___::Group(val) => blob.push_str(UbusBlobType::GROUP, &val)?,
-//             UbusMsgAttr___::Unknown(id, val) => blob.push_bytes(id, &val)?,
-//         };
-
-//         self.offset += blob.len();
-//         Ok(())
-//     }
-
-//     pub fn finish(self) -> Vec<u8> {
-//         // Update tag with correct size
-//         let tag = BlobTag::try_build(
-//             UbusBlobType::UNSPEC,
-//             self.offset - UbusMsgHeader::SIZE,
-//             false,
-//         )
-//         .unwrap();
-//         let tag_buf = &self.buffer[UbusMsgHeader::SIZE..UbusMsgHeader::SIZE + BlobTag::SIZE];
-//         let tag_buf: &[u8; BlobTag::SIZE] = tag_buf.try_into().unwrap();
-//         *tag_buf = tag.to_bytes();
-//         self.buffer[..self.offset].to_owned()
-//     }
-// }
-// impl<'a> Into<Vec<u8>> for UbusMsgBuilder___ {
-//     fn into(self) -> Vec<u8> {
-//         self.finish()
-//     }
-// }
-
-// #[derive(Debug)]
-// pub enum UbusMsgAttr___ {
-//     Status(UbusMsgStatus),
-//     ObjPath(String),
-//     ObjId(u32),
-//     Method(String),
-//     ObjType(u32),
-//     Signature(HashMap<String, BlobMsgPayload>),
-//     Data(Vec<u8>),
-//     Target(u32),
-//     Active(bool),
-//     NoReply(bool),
-//     Subscribers(BlobIter<UbusBlob>),
-//     User(String),
-//     Group(String),
-//     Unknown(UbusBlobType, Vec<u8>),
-// }
-
-// impl<'a> From<UbusBlob> for UbusMsgAttr___ {
-//     fn from(blob: UbusBlob) -> Self {
-//         let payload = UbusBlobPayload::from(&blob.data);
-//         match blob.tag.id().into() {
-//             UbusBlobType::STATUS => UbusMsgAttr___::Status(payload.try_into().unwrap()),
-//             UbusBlobType::OBJPATH => UbusMsgAttr___::ObjPath(payload.try_into().unwrap()),
-//             UbusBlobType::OBJID => UbusMsgAttr___::ObjId(payload.try_into().unwrap()),
-//             UbusBlobType::METHOD => UbusMsgAttr___::Method(payload.try_into().unwrap()),
-//             UbusBlobType::OBJTYPE => UbusMsgAttr___::ObjType(payload.try_into().unwrap()),
-//             UbusBlobType::SIGNATURE => UbusMsgAttr___::Signature(payload.try_into().unwrap()),
-//             UbusBlobType::DATA => UbusMsgAttr___::Data(payload.try_into().unwrap()),
-//             UbusBlobType::TARGET => UbusMsgAttr___::Target(payload.try_into().unwrap()),
-//             UbusBlobType::ACTIVE => UbusMsgAttr___::Active(payload.try_into().unwrap()),
-//             UbusBlobType::NO_REPLY => UbusMsgAttr___::NoReply(payload.try_into().unwrap()),
-//             UbusBlobType::SUBSCRIBERS => UbusMsgAttr___::Subscribers(payload.try_into().unwrap()),
-//             UbusBlobType::USER => UbusMsgAttr___::User(payload.try_into().unwrap()),
-//             UbusBlobType::GROUP => UbusMsgAttr___::Group(payload.try_into().unwrap()),
-//             id => UbusMsgAttr___::Unknown(id, blob.data),
-//         }
-//     }
-// }

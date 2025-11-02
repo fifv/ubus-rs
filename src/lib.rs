@@ -2,12 +2,11 @@
 #![allow(dead_code)]
 #![feature(iterator_try_collect)]
 
-
 #[cfg(not(no_std))]
 extern crate std;
 
 /**
- * TODO: 
+ * TODO:
  * - Reduce Copy
  * - Reduce Alloc
  * - Better Readibility
@@ -153,8 +152,8 @@ pub trait IO {
 
 mod blob;
 mod blobmsg;
-mod ubusblob;
 mod connection;
+mod ubusblob;
 mod ubuserror;
 mod ubusmsg;
 mod ubusobj;
@@ -163,7 +162,7 @@ mod usock;
 pub use blob::*;
 pub use blobmsg::*;
 pub use connection::*;
+pub use ubusblob::*;
 pub use ubuserror::*;
 pub use ubusmsg::*;
 pub use ubusobj::*;
-pub use ubusblob::*;

@@ -1,17 +1,9 @@
-use crate::{
-    BlobMsg, BlobMsgPayload, BlobMsgType, MsgTable, UbusBlob, UbusBlobType, UbusError, UbusMsg,
-    UbusMsgStatus,
-};
+use crate::{BlobMsg, MsgTable, UbusBlob, UbusError};
 
 use core::convert::{TryFrom, TryInto};
-use core::marker::PhantomData;
 use core::mem::{align_of, size_of, transmute};
-use core::str;
-use serde::{Deserialize, Serialize};
 use std::borrow::ToOwned;
-use std::collections::HashMap;
-use std::dbg;
-use std::string::{String, ToString};
+use std::string::String;
 use std::vec::Vec;
 use storage_endian::BEu32;
 
@@ -32,13 +24,11 @@ use storage_endian::BEu32;
  * to convert rust structs into raw bytes on wire, so they can send on socket
  */
 
-
 #[derive(Clone, Debug)]
 pub enum Blob {
     UbusBlob(UbusBlob),
     BlogMsg(BlobMsg),
 }
-
 
 /**
  * `BlobIter` used to find all Blob in the bytes
@@ -84,7 +74,6 @@ impl<'a> Iterator for BlobIter<'a> {
             }
         }
 
-
         None
     }
 }
@@ -94,7 +83,6 @@ impl<'a> core::fmt::Debug for BlobIter<'a> {
         write!(f, "BlobIter (data_len={})", self.data.len())
     }
 }
-
 
 /**
  * `BlobTag` represents struct blob_attr.id_len in blob.h
@@ -189,7 +177,6 @@ impl core::fmt::Debug for BlobTag {
     }
 }
 
-
 /**
  * `BlobBuilder` is used to encode `Blob` from "native rust struct" to "raw bytes on wire"
  */
@@ -211,11 +198,11 @@ impl BlobBuilder {
         }
     }
 
-    pub fn to_bytes(self) -> Vec<u8>{
+    pub fn to_bytes(self) -> Vec<u8> {
         self.into()
     }
 
-    pub fn to_bytes_clone(&self) -> Vec<u8>{
+    pub fn to_bytes_clone(&self) -> Vec<u8> {
         self.buffer.to_owned()
     }
 
@@ -264,7 +251,6 @@ impl BlobBuilder {
         // Advance offset
         self.offset += total_len;
 
-
         Ok(())
     }
 
@@ -305,7 +291,6 @@ impl BlobBuilder {
     }
 }
 
-
 /**
  * `BlobPayloadParser` is used to parse bytes into rust struct
  */
@@ -323,7 +308,6 @@ impl<'a> From<&'a [u8]> for BlobPayloadParser<'a> {
 //         BlobPayloadParser(value)
 //     }
 // }
-
 
 macro_rules! payload_try_into_number {
     ( $( $ty:ty , )* ) => { $( payload_try_into_number!($ty); )* };
@@ -350,7 +334,6 @@ impl<'a> TryInto<bool> for BlobPayloadParser<'a> {
         Ok(value != 0)
     }
 }
-
 
 impl<'a> TryInto<String> for BlobPayloadParser<'a> {
     type Error = UbusError;

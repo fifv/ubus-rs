@@ -19,7 +19,8 @@ mod tests {
 
         // padding and next_tag should be consistent with ALIGNMENT
         let padded = tag.next_tag();
-        let expected_padding = BlobTag::ALIGNMENT.wrapping_sub(tag.size()) & (BlobTag::ALIGNMENT - 1);
+        let expected_padding =
+            BlobTag::ALIGNMENT.wrapping_sub(tag.size()) & (BlobTag::ALIGNMENT - 1);
         assert_eq!(tag.padding(), expected_padding);
         assert_eq!(padded, tag.size() + expected_padding);
 
@@ -33,16 +34,18 @@ mod tests {
     fn ubusblob_string_roundtrip() {
         // create a OBJPATH string blob and parse it back
         let name = "hello-world";
-        let builder = BlobBuilder::from_str(UbusBlobType::OBJPATH.value(), name)
-            .expect("build objpath blob");
+        let builder =
+            BlobBuilder::from_str(UbusBlobType::OBJPATH.value(), name).expect("build objpath blob");
         // verify tag metadata matches buffer
-        let tag_bytes: [u8; BlobTag::SIZE] = builder.to_bytes_clone()[..BlobTag::SIZE].try_into().unwrap();
+        let tag_bytes: [u8; BlobTag::SIZE] = builder.to_bytes_clone()[..BlobTag::SIZE]
+            .try_into()
+            .unwrap();
         let tag = BlobTag::from_bytes(&tag_bytes);
         assert_eq!(tag.size(), BlobTag::SIZE + name.len() + 1); // header + nul byte
 
         // parse as UbusBlob
-        let ub =
-            UbusBlob::try_from(builder.to_bytes_clone().as_slice()).expect("parse ubus blob from bytes");
+        let ub = UbusBlob::try_from(builder.to_bytes_clone().as_slice())
+            .expect("parse ubus blob from bytes");
         match ub {
             UbusBlob::ObjPath(s) => assert_eq!(s, name),
             other => panic!("unexpected variant: {:?}", other),
@@ -53,11 +56,9 @@ mod tests {
     fn ubusblob_u32_and_iter_multiple() {
         // build two blobs: OBJID (numeric) and OBJPATH (string)
         let id_value: u32 = 0x2a;
-        let b1 = BlobBuilder::from_u32(UbusBlobType::OBJID.value(), id_value)
-            .expect("build objid");
+        let b1 = BlobBuilder::from_u32(UbusBlobType::OBJID.value(), id_value).expect("build objid");
         let path = "svc/example";
-        let b2 = BlobBuilder::from_str(UbusBlobType::OBJPATH.value(), path)
-            .expect("build objpath");
+        let b2 = BlobBuilder::from_str(UbusBlobType::OBJPATH.value(), path).expect("build objpath");
 
         // concatenate buffers as a stream and iterate
         let mut stream = Vec::new();
@@ -89,10 +90,12 @@ mod tests {
     #[test]
     fn blobbuilder_tag_next_tag_matches_buffer_len() {
         // small string to force some padding maybe
-        let builder = BlobBuilder::from_str(UbusBlobType::METHOD.value(), "x")
-            .expect("build method blob");
+        let builder =
+            BlobBuilder::from_str(UbusBlobType::METHOD.value(), "x").expect("build method blob");
         let buf_len = builder.to_bytes_clone().len();
-        let tag_bytes: [u8; BlobTag::SIZE] = builder.to_bytes_clone()[..BlobTag::SIZE].try_into().unwrap();
+        let tag_bytes: [u8; BlobTag::SIZE] = builder.to_bytes_clone()[..BlobTag::SIZE]
+            .try_into()
+            .unwrap();
         let tag = BlobTag::from_bytes(&tag_bytes);
         // next_tag should correspond to the total padded size written to the buffer
         assert_eq!(tag.next_tag(), buf_len);

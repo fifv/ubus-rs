@@ -1,13 +1,15 @@
+use core::iter::Map;
 use std::borrow::ToOwned;
+use std::string::{String, ToString};
 use std::vec::Vec;
-use std::{collections::HashMap, string::String};
 use std::{fmt, vec};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Blob, BlobTag, BlobPayloadParser, UbusBlobType, UbusError};
+use crate::{Blob, BlobPayloadParser, BlobTag, UbusError};
 
+pub type JsonObject = serde_json::Map<String, Value>;
 
 values!(pub BlobMsgType(u32) {
     UNSPEC = 0,
@@ -37,7 +39,6 @@ pub struct BlobMsg {
  */
 impl TryFrom<&[u8]> for BlobMsg {
     type Error = UbusError;
-    // FIXME: value size is not message size!
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
         if data.len() < BlobTag::SIZE {
             return Err(UbusError::InvalidData("Data too short to get a BlobTag"));
@@ -71,9 +72,7 @@ impl TryFrom<&[u8]> for BlobMsg {
             BlobTag::ALIGNMENT.wrapping_sub(name_total_len) & (BlobTag::ALIGNMENT - 1);
         // FIXME\: maybe not correct
         /* ISSUE: we must limit the upper bound, if give entire buffer, parsing becomes weird */
-        let parser = BlobPayloadParser::from(
-            &data[name_padding..tag.inner_len() - name_total_len],
-        );
+        let parser = BlobPayloadParser::from(&data[name_padding..tag.inner_len() - name_total_len]);
         let data = match BlobMsgType(tag.blob_type()) {
             BlobMsgType::ARRAY => BlobMsgPayload::Array(parser.try_into()?),
             BlobMsgType::TABLE => BlobMsgPayload::Table(parser.try_into()?),
@@ -95,10 +94,10 @@ impl TryFrom<&[u8]> for BlobMsg {
  *
  *
  */
-impl TryInto<Vec<u8>> for BlobMsg {
+impl TryFrom<BlobMsg> for Vec<u8> {
     type Error = UbusError;
-    fn try_into(self) -> Result<Vec<u8>, Self::Error> {
-        let builder = BlobMsgBuilder::try_from(self)?;
+    fn try_from(blobmsg: BlobMsg) -> Result<Self, Self::Error> {
+        let builder = BlobMsgBuilder::try_from(blobmsg)?;
         Ok(builder.data().to_owned())
     }
 }
@@ -117,6 +116,93 @@ pub enum BlobMsgPayload {
     Unknown(u32, Vec<u8>),
 }
 
+/**
+ * convert between Value and BlobMsgPayload
+ */
+impl From<Value> for BlobMsgPayload {
+    fn from(json_value: Value) -> Self {
+        match json_value {
+            Value::Null => BlobMsgPayload::Unknown(0, vec![]),
+
+            Value::Bool(b) => BlobMsgPayload::Bool(b as i8),
+
+            Value::Number(num) => {
+                if let Some(i) = num.as_i64() {
+                    if i <= i8::MAX as i64 && i >= i8::MIN as i64 {
+                        BlobMsgPayload::Int8(i as i8)
+                    } else if i <= i16::MAX as i64 && i >= i16::MIN as i64 {
+                        BlobMsgPayload::Int16(i as i16)
+                    } else if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
+                        BlobMsgPayload::Int32(i as i32)
+                    } else {
+                        BlobMsgPayload::Int64(i)
+                    }
+                } else if let Some(f) = num.as_f64() {
+                    BlobMsgPayload::Double(f)
+                } else {
+                    BlobMsgPayload::Unknown(1, vec![])
+                }
+            }
+
+            Value::String(s) => BlobMsgPayload::String(s.to_string()),
+
+            Value::Array(arr) => BlobMsgPayload::Array(
+                arr.into_iter()
+                    .map(|v| BlobMsg {
+                        name: "".into(),
+                        data: BlobMsgPayload::from(v),
+                    })
+                    .collect(),
+            ),
+
+            Value::Object(map) => BlobMsgPayload::Table(
+                map.into_iter()
+                    .map(|(k, v)| BlobMsg {
+                        name: k,
+                        data: BlobMsgPayload::from(v),
+                    })
+                    .collect::<Vec<BlobMsg>>(),
+            ),
+        }
+    }
+}
+
+impl TryFrom<BlobMsgPayload> for Value {
+    type Error = UbusError;
+    fn try_from(blobmsg_payload: BlobMsgPayload) -> Result<Self, Self::Error> {
+        Ok(match blobmsg_payload {
+            BlobMsgPayload::Bool(b) => Value::Bool(b != 0),
+            BlobMsgPayload::Int8(v) => Value::Number(v.into()),
+            BlobMsgPayload::Int16(v) => Value::Number(v.into()),
+            BlobMsgPayload::Int32(v) => Value::Number(v.into()),
+            BlobMsgPayload::Int64(v) => Value::Number(v.into()),
+            BlobMsgPayload::Double(f) => Value::Number(
+                serde_json::Number::from_f64(f)
+                    .ok_or_else(|| UbusError::InvalidData("NaN JSON"))?,
+            ),
+
+            BlobMsgPayload::String(s) => Value::String(s),
+
+            BlobMsgPayload::Array(arr) => Value::Array(
+                arr.into_iter()
+                    .map(|blobmsg| blobmsg.data.try_into())
+                    .try_collect::<Vec<Value>>()?,
+            ),
+
+            BlobMsgPayload::Table(map) => Value::Object(
+                map.into_iter()
+                    .map(|blobmsg| Ok::<_, UbusError>((blobmsg.name, blobmsg.data.try_into()?)))
+                    .try_collect::<serde_json::Map<String, Value>>()?
+                    .into(),
+            ),
+
+            BlobMsgPayload::Unknown(_, _) => {
+                return Err(UbusError::InvalidData("Unknown blob type"));
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MsgTable(pub Vec<BlobMsg>);
 impl MsgTable {
@@ -125,17 +211,17 @@ impl MsgTable {
     }
 }
 
-impl TryInto<Vec<u8>> for MsgTable {
+impl TryFrom<MsgTable> for Vec<u8> {
     type Error = UbusError;
     /**
      * turn Vec<BlobMsg> into bytes
      * Real magic happens on `BlobMsg::try_into(Vec<u8>)` -> `BlobMsgBuilder::try_from()`
      */
-    fn try_into(self) -> Result<Vec<u8>, Self::Error> {
-        Ok(self
+    fn try_from(msgtable: MsgTable) -> Result<Self, Self::Error> {
+        Ok(msgtable
             .0
             .into_iter()
-            .map(|blobmsg| TryInto::<Vec<u8>>::try_into(blobmsg))
+            .map(|blobmsg| <Vec<u8>>::try_from(blobmsg))
             .try_collect::<Vec<Vec<u8>>>()?
             .into_iter()
             .flatten()
@@ -143,14 +229,14 @@ impl TryInto<Vec<u8>> for MsgTable {
     }
 }
 impl From<Vec<BlobMsg>> for MsgTable {
-    fn from(value: Vec<BlobMsg>) -> Self {
-        Self(value)
+    fn from(blobmsg: Vec<BlobMsg>) -> Self {
+        Self(blobmsg)
     }
 }
 impl TryFrom<Blob> for BlobMsg {
     type Error = UbusError;
-    fn try_from(value: Blob) -> Result<Self, Self::Error> {
-        match value {
+    fn try_from(blob: Blob) -> Result<Self, Self::Error> {
+        match blob {
             Blob::BlogMsg(blobmsg) => Ok(blobmsg),
             Blob::UbusBlob(_) => Err(UbusError::InvalidData("")),
         }
@@ -158,76 +244,52 @@ impl TryFrom<Blob> for BlobMsg {
 }
 impl TryFrom<&str> for MsgTable {
     type Error = UbusError;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        fn json_to_args(json: &str) -> Result<MsgTable, UbusError> {
-            let value: Value = serde_json::from_str(json).expect("Invalid JSON");
-
-            // top-level MUST be object/array to produce args
-            match value {
-                Value::Object(map) => Ok(MsgTable(
-                    map.into_iter()
-                        .map(|(k, v)| json_value_to_blobmsg(k, v))
-                        .collect(),
-                )),
-                _ => Err(UbusError::InvalidData(
-                    "Invalid JSON, must be object at top-level",
-                )),
-            }
+    fn try_from(json: &str) -> Result<Self, Self::Error> {
+        // top-level MUST be object/array to produce args
+        match serde_json::from_str(json).expect("Invalid JSON") {
+            // Value::Object(map) => map.try_into(),
+            Value::Object(map) => map.try_into(),
+            _ => Err(UbusError::InvalidData(
+                "Invalid JSON, must be object at top-level",
+            )),
         }
-
-
-        fn json_value_to_blobmsg(name: String, value: Value) -> BlobMsg {
-            let payload = match value {
-                Value::Null => BlobMsgPayload::Unknown(0, vec![]),
-
-                Value::Bool(b) => BlobMsgPayload::Bool(b as i8),
-
-                Value::Number(num) => {
-                    if let Some(i) = num.as_i64() {
-                        if i <= i8::MAX as i64 && i >= i8::MIN as i64 {
-                            BlobMsgPayload::Int8(i as i8)
-                        } else if i <= i16::MAX as i64 && i >= i16::MIN as i64 {
-                            BlobMsgPayload::Int16(i as i16)
-                        } else if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
-                            BlobMsgPayload::Int32(i as i32)
-                        } else {
-                            BlobMsgPayload::Int64(i)
-                        }
-                    } else if let Some(f) = num.as_f64() {
-                        BlobMsgPayload::Double(f)
-                    } else {
-                        BlobMsgPayload::Unknown(1, vec![])
-                    }
-                }
-
-                Value::String(s) => BlobMsgPayload::String(s),
-
-                Value::Array(arr) => {
-                    let children = arr
-                        .into_iter()
-                        .map(|v| json_value_to_blobmsg("".into(), v))
-                        .collect();
-                    BlobMsgPayload::Array(children)
-                }
-
-                Value::Object(map) => {
-                    let children = map
-                        .into_iter()
-                        .map(|(k, v)| json_value_to_blobmsg(k, v))
-                        .collect();
-                    BlobMsgPayload::Table(children)
-                }
-            };
-
-            BlobMsg {
-                name,
-                data: payload,
-            }
-        }
-        json_to_args(value)
+    }
+}
+impl TryFrom<JsonObject> for MsgTable {
+    type Error = UbusError;
+    fn try_from(json_map: JsonObject) -> Result<Self, Self::Error> {
+        Ok(MsgTable(
+            json_map
+                .into_iter()
+                .map(|(k, v)| BlobMsg {
+                    name: k,
+                    data: v.into(),
+                })
+                .collect(),
+        ))
     }
 }
 
+impl TryFrom<MsgTable> for String {
+    type Error = UbusError;
+    fn try_from(value: MsgTable) -> Result<Self, Self::Error> {
+        let json_obj: JsonObject = value.try_into()?;
+        Ok(Value::Object(json_obj).to_string())
+    }
+}
+impl TryFrom<MsgTable> for JsonObject {
+    type Error = UbusError;
+    fn try_from(value: MsgTable) -> Result<Self, Self::Error> {
+        value
+            .0
+            .into_iter()
+            .try_fold(JsonObject::new(), |mut obj, msg| {
+                let (k, v) = (msg.name, msg.data.try_into()?);
+                obj.insert(k, v);
+                Ok(obj)
+            })
+    }
+}
 
 impl fmt::Display for BlobMsgPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -284,7 +346,6 @@ impl<'a> fmt::Display for Dict<'a> {
     }
 }
 
-
 impl fmt::Display for BlobMsg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.name.len() > 0 {
@@ -295,11 +356,10 @@ impl fmt::Display for BlobMsg {
     }
 }
 
-
 /**
  * BlobMsgBuilder is used to convert BlobMsg from "native rust struct" to "raw bytes on wire"
  *
- * TODO: move to BlobMsg itself and move to blobmsg.rs
+ * TODO: move to BlobMsg itself
  */
 pub struct BlobMsgBuilder {
     buffer: Vec<u8>,
@@ -467,12 +527,4 @@ impl BlobMsgBuilder {
     pub fn data(&self) -> &[u8] {
         &self.buffer
     }
-
-    // pub fn build(&self) -> UbusBlob {
-    //     let data = self.data();
-    //     let tag = BlobTag::from_bytes(self.buffer[..4].try_into().unwrap());
-    //     let data = data[4..].to_owned();
-    //     // TODO: implement raw bytes -> BlobMsg
-    //     UbusBlob { tag, data }
-    // }
 }

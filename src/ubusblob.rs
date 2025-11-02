@@ -1,7 +1,4 @@
-use crate::{
-    Blob, BlobBuilder, BlobIter, BlobMsg, BlobPayloadParser, BlobTag, MsgTable, UbusError,
-    UbusMsgStatus,
-};
+use crate::{Blob, BlobBuilder, BlobPayloadParser, BlobTag, MsgTable, UbusError, UbusMsgStatus};
 use serde::{Deserialize, Serialize};
 use std::{borrow::ToOwned, string::String, vec::Vec};
 
@@ -21,7 +18,6 @@ values!(pub UbusBlobType(u32) {
     USER        = 0x0c,
     GROUP       = 0x0d,
 });
-
 
 #[derive(Clone, Debug)]
 pub enum UbusBlob {
@@ -125,14 +121,14 @@ impl UbusBlob {
                 /*  */
                 BlobBuilder::from_bytes(
                     UbusBlobType::SIGNATURE.value(),
-                    TryInto::<Vec<u8>>::try_into(v.to_owned()).unwrap().iter(),
+                    <Vec<u8>>::try_from(v.to_owned()).unwrap().iter(),
                 )
                 .unwrap()
                 .into()
             }
             UbusBlob::Data(v) => BlobBuilder::from_bytes(
                 UbusBlobType::DATA.value(),
-                TryInto::<Vec<u8>>::try_into(v.to_owned()).unwrap().iter(),
+                <Vec<u8>>::try_from(v.to_owned()).unwrap().iter(),
             )
             .unwrap()
             .into(),
@@ -157,14 +153,5 @@ impl UbusBlob {
                 .unwrap()
                 .into(),
         }
-
-        // // build tag: inner_len = payload len
-        // let tag = BlobTag::try_build(blob_type, payload_bytes.len(), false).expect("failed");
-
-        // // serialize tag + payload
-        // let mut result = Vec::with_capacity(BlobTag::SIZE + payload_bytes.len());
-        // result.extend_from_slice(&tag.to_bytes());
-        // result.extend_from_slice(&payload_bytes);
-        // result
     }
 }

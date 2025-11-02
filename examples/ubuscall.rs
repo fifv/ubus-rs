@@ -31,6 +31,7 @@ fn main() {
     };
     match connection.call(obj_path, method, data) {
         Ok(json) => {
+            // println!("{}", json);
             let parsed: Value = serde_json::from_str(&json).unwrap();
             let pretty_json = to_string_pretty(&parsed).unwrap();
             println!("{}", pretty_json);

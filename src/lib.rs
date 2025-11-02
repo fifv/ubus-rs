@@ -6,6 +6,14 @@
 #[cfg(not(no_std))]
 extern crate std;
 
+/**
+ * TODO: 
+ * - Reduce Copy
+ * - Reduce Alloc
+ * - Better Readibility
+ * - Tests
+ */
+
 /// Macro for defining helpful enum-like opaque structs
 macro_rules! values {
     (
@@ -145,6 +153,7 @@ pub trait IO {
 
 mod blob;
 mod blobmsg;
+mod ubusblob;
 mod connection;
 mod ubuserror;
 mod ubusmsg;
@@ -157,3 +166,4 @@ pub use connection::*;
 pub use ubuserror::*;
 pub use ubusmsg::*;
 pub use ubusobj::*;
+pub use ubusblob::*;

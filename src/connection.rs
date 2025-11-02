@@ -2,6 +2,7 @@ use crate::*;
 
 use core::ops::Not;
 use core::panic;
+use std::println;
 use std::{borrow::ToOwned, collections::HashMap, dbg, string::ToString, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
@@ -113,7 +114,7 @@ impl<T: IO> Connection<T> {
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
-                    for blob in message.blobs {
+                    for blob in message.ubus_blobs {
                         match blob {
                             UbusBlob::Status(UbusMsgStatus::OK) => {
                                 break 'messages Ok(res_args);
@@ -127,11 +128,11 @@ impl<T: IO> Connection<T> {
                     return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::DATA => {
-                    for blob in message.blobs {
-                        dbg!(&blob);
+                    for blob in message.ubus_blobs {
+                        // dbg!(&blob);
                         if let UbusBlob::Data(data) = blob {
                             res_args = data;
-                            dbg!(&res_args);
+                            // dbg!(&res_args);
                             continue 'messages;
                         }
                     }
@@ -286,7 +287,8 @@ impl<T: IO> Connection<T> {
 
         'message_iter: loop {
             let message = self.next_message()?;
-            dbg!(&message, &message.blobs);
+            dbg!(&message);
+            // println!("{:#?}", &message);
             if message.header.sequence != header.sequence {
                 continue;
             }
@@ -297,8 +299,8 @@ impl<T: IO> Connection<T> {
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
-                    for blob in message.blobs {
-                        dbg!(&blob);
+                    for blob in message.ubus_blobs {
+                        // dbg!(&blob);
                         match blob {
                             UbusBlob::Status(UbusMsgStatus::OK) => {
                                 break 'message_iter Ok(obj);
@@ -312,7 +314,7 @@ impl<T: IO> Connection<T> {
                     return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::DATA => {
-                    for blob in message.blobs {
+                    for blob in message.ubus_blobs {
                         match blob {
                             UbusBlob::ObjPath(path) => obj.path = path.to_string(),
                             UbusBlob::ObjId(id) => obj.id = id as u32,

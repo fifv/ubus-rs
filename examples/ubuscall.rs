@@ -18,7 +18,7 @@ fn main() {
         data = &args[3];
     }
 
-    dbg!(&data);
+    // dbg!(&data);
 
     let socket = Path::new("/var/run/ubus/ubus.sock");
 

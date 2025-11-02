@@ -6,7 +6,7 @@ use std::{fmt, vec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Blob, BlobTag, UbusBlobPayload, UbusBlobType, UbusError};
+use crate::{Blob, BlobTag, BlobPayloadParser, UbusBlobType, UbusError};
 
 
 values!(pub BlobMsgType(u32) {
@@ -22,6 +22,9 @@ values!(pub BlobMsgType(u32) {
     DOUBLE = 8,
 });
 
+/**
+ * `BlobMsg` can represent json, so they can be converted to serde_json::Value and then to string
+ */
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobMsg {
     pub name: String,
@@ -66,21 +69,21 @@ impl TryFrom<&[u8]> for BlobMsg {
         let name_total_len = size_of::<u16>() + name_len;
         let name_padding =
             BlobTag::ALIGNMENT.wrapping_sub(name_total_len) & (BlobTag::ALIGNMENT - 1);
-        // FIXME: maybe not correct
+        // FIXME\: maybe not correct
         /* ISSUE: we must limit the upper bound, if give entire buffer, parsing becomes weird */
-        let payload = UbusBlobPayload::from(
+        let parser = BlobPayloadParser::from(
             &data[name_padding..tag.inner_len() - name_total_len],
         );
-        let data = match BlobMsgType(tag.blob_type().value()) {
-            BlobMsgType::ARRAY => BlobMsgPayload::Array(payload.try_into()?),
-            BlobMsgType::TABLE => BlobMsgPayload::Table(payload.try_into()?),
-            BlobMsgType::STRING => BlobMsgPayload::String(payload.try_into()?),
-            BlobMsgType::INT64 => BlobMsgPayload::Int64(payload.try_into()?),
-            BlobMsgType::INT32 => BlobMsgPayload::Int32(payload.try_into()?),
-            BlobMsgType::INT16 => BlobMsgPayload::Int16(payload.try_into()?),
-            BlobMsgType::INT8 => BlobMsgPayload::Int8(payload.try_into()?),
-            BlobMsgType::DOUBLE => BlobMsgPayload::Double(payload.try_into()?),
-            id => BlobMsgPayload::Unknown(id.value(), payload.into()),
+        let data = match BlobMsgType(tag.blob_type()) {
+            BlobMsgType::ARRAY => BlobMsgPayload::Array(parser.try_into()?),
+            BlobMsgType::TABLE => BlobMsgPayload::Table(parser.try_into()?),
+            BlobMsgType::STRING => BlobMsgPayload::String(parser.try_into()?),
+            BlobMsgType::INT64 => BlobMsgPayload::Int64(parser.try_into()?),
+            BlobMsgType::INT32 => BlobMsgPayload::Int32(parser.try_into()?),
+            BlobMsgType::INT16 => BlobMsgPayload::Int16(parser.try_into()?),
+            BlobMsgType::INT8 => BlobMsgPayload::Int8(parser.try_into()?),
+            BlobMsgType::DOUBLE => BlobMsgPayload::Double(parser.try_into()?),
+            id => BlobMsgPayload::Unknown(id.value(), parser.into()),
         };
         Ok(BlobMsg { name, data })
     }
@@ -383,7 +386,7 @@ impl BlobMsgBuilder {
         // let _phantom = PhantomData::<&mut [u8]>;
         let mut blob = Self { buffer: Vec::new() };
         //blob.buffer.extend(&[0u8; BlobTag::SIZE]);
-        let tag = BlobTag::try_build(UbusBlobType(id.value()), BlobTag::SIZE, true).unwrap();
+        let tag = BlobTag::try_build(id.value(), BlobTag::SIZE, true).unwrap();
         blob.buffer.extend(tag.to_bytes());
         let len_bytes = u16::to_be_bytes(name.len() as u16);
         blob.buffer.extend(len_bytes);
@@ -393,7 +396,7 @@ impl BlobMsgBuilder {
         let name_padding =
             BlobTag::ALIGNMENT.wrapping_sub(name_total_len) & (BlobTag::ALIGNMENT - 1);
         blob.buffer.resize(blob.buffer.len() + name_padding, 0u8);
-        let tag = BlobTag::try_build(UbusBlobType(id.value()), blob.buffer.len(), true).unwrap();
+        let tag = BlobTag::try_build(id.value(), blob.buffer.len(), true).unwrap();
         blob.buffer[..BlobTag::SIZE].copy_from_slice(&tag.to_bytes());
         blob
     }

@@ -1,5 +1,6 @@
 use crate::{
-    Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, IO, UbusBlob, UbusBlobPayload, UbusError,
+    Blob, BlobBuilder, BlobIter, BlobMsgPayload, BlobTag, IO, UbusBlob, BlobPayloadParser,
+    UbusBlobType, UbusError,
 };
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
@@ -31,22 +32,6 @@ values!(pub UbusCmdType(u8) {
     MONITOR         = 0x11,
 });
 
-values!(pub UbusBlobType(u32) {
-    UNSPEC      = 0x00,
-    STATUS      = 0x01,
-    OBJPATH     = 0x02,
-    OBJID       = 0x03,
-    METHOD      = 0x04,
-    OBJTYPE     = 0x05,
-    SIGNATURE   = 0x06,
-    DATA        = 0x07,
-    TARGET      = 0x08,
-    ACTIVE      = 0x09,
-    NO_REPLY    = 0x0a,
-    SUBSCRIBERS = 0x0b,
-    USER        = 0x0c,
-    GROUP       = 0x0d,
-});
 
 values!(pub UbusMsgStatus(i32) {
     OK                    = 0x00,
@@ -90,7 +75,7 @@ impl UbusMsgHeader {
 #[derive(Clone)]
 pub struct UbusMsg {
     pub header: UbusMsgHeader,
-    pub blobs: Vec<UbusBlob>,
+    pub ubus_blobs: Vec<UbusBlob>,
 }
 
 
@@ -111,18 +96,21 @@ impl UbusMsg {
         /* use the length extracted from blob header, read such length of blob data  */
         let mut ubusmsg_data_buffer = vec![0u8; tag.inner_len()];
         io.get(&mut ubusmsg_data_buffer)?;
-        let blobs = BlobIter::new(ubusmsg_data_buffer)
+        let blobs = BlobIter::new(&ubusmsg_data_buffer)
             .map(|blob| blob.try_into())
             .try_collect::<Vec<UbusBlob>>()?;
         // let blob = UbusBlob::from_tag_and_data(tag, ubusmsg_data_buffer).unwrap();
 
-        Ok(UbusMsg { header, blobs })
+        Ok(UbusMsg {
+            header,
+            ubus_blobs: blobs,
+        })
     }
 
     pub fn from_header_and_blobs(header: &UbusMsgHeader, blobs: Vec<UbusBlob>) -> Self {
         Self {
             header: *header,
-            blobs: blobs,
+            ubus_blobs: blobs,
         }
     }
 
@@ -131,12 +119,12 @@ impl UbusMsg {
 
 
         let mut ubusmsg_blobs_buffer = Vec::new();
-        for blob in self.blobs {
+        for blob in self.ubus_blobs {
             ubusmsg_blobs_buffer.extend_from_slice(&blob.to_bytes());
         }
 
         let ubusmsg_blob_header_buffer = BlobTag::try_build(
-            UbusBlobType::UNSPEC,
+            UbusBlobType::UNSPEC.value(),
             BlobTag::SIZE + ubusmsg_blobs_buffer.len(),
             false,
         )
@@ -157,8 +145,18 @@ impl core::fmt::Debug for UbusMsg {
         write!(
             f,
             "Message({:?} seq={}, peer={:08x}, blobs={:?})",
-            self.header.cmd_type, self.header.sequence, self.header.peer, self.blobs
+            self.header.cmd_type, self.header.sequence, self.header.peer, self.ubus_blobs
         )
+
+        // writeln!(
+        //     f,
+        //     "Message({:?} seq={}, peer={:08x}, blobs=[",
+        //     self.header.cmd_type, self.header.sequence, self.header.peer
+        // )?;
+        // for blob in &self.ubus_blobs {
+        //     writeln!(f, "    {:?},", blob)?;
+        // }
+        // write!(f, "])",)
     }
 }
 

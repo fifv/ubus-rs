@@ -21,6 +21,7 @@ This makes strong assumption that `ubus` only use limited size of `type`s of Blo
   * e.g. If `UbusBlob` has `type DATA`, then its payload is multiple `BlobMsg`s, which can be converted to one json object
 
 
+* Seems only root can connect to `ubusd`? To tests and development, I add an early `return 0;` to beginning of `ubusd_acl.c` -> `ubusd_acl_check()` in `ubusd` to skip auth
 
 
 Supported

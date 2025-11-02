@@ -211,6 +211,14 @@ impl BlobBuilder {
         }
     }
 
+    pub fn to_bytes(self) -> Vec<u8>{
+        self.into()
+    }
+
+    pub fn to_bytes_clone(&self) -> Vec<u8>{
+        self.buffer.to_owned()
+    }
+
     pub fn push_u32(&mut self, id: u32, data: u32) -> Result<(), UbusError> {
         self.push_bytes(id, &data.to_be_bytes())
     }

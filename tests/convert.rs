@@ -36,13 +36,13 @@ mod tests {
         let builder = BlobBuilder::from_str(UbusBlobType::OBJPATH.value(), name)
             .expect("build objpath blob");
         // verify tag metadata matches buffer
-        let tag_bytes: [u8; BlobTag::SIZE] = builder.buffer[..BlobTag::SIZE].try_into().unwrap();
+        let tag_bytes: [u8; BlobTag::SIZE] = builder.to_bytes_clone()[..BlobTag::SIZE].try_into().unwrap();
         let tag = BlobTag::from_bytes(&tag_bytes);
         assert_eq!(tag.size(), BlobTag::SIZE + name.len() + 1); // header + nul byte
 
         // parse as UbusBlob
         let ub =
-            UbusBlob::try_from(builder.buffer.as_slice()).expect("parse ubus blob from bytes");
+            UbusBlob::try_from(builder.to_bytes_clone().as_slice()).expect("parse ubus blob from bytes");
         match ub {
             UbusBlob::ObjPath(s) => assert_eq!(s, name),
             other => panic!("unexpected variant: {:?}", other),
@@ -61,10 +61,10 @@ mod tests {
 
         // concatenate buffers as a stream and iterate
         let mut stream = Vec::new();
-        stream.extend_from_slice(&b1.buffer);
-        stream.extend_from_slice(&b2.buffer);
+        stream.extend_from_slice(&b1.to_bytes_clone());
+        stream.extend_from_slice(&b2.to_bytes_clone());
 
-        let mut iter = BlobIter::new(stream);
+        let mut iter = BlobIter::new(&stream);
         let first = iter.next().expect("first blob");
         match first {
             Blob::UbusBlob(UbusBlob::ObjId(v)) => {
@@ -91,8 +91,8 @@ mod tests {
         // small string to force some padding maybe
         let builder = BlobBuilder::from_str(UbusBlobType::METHOD.value(), "x")
             .expect("build method blob");
-        let buf_len = builder.buffer.len();
-        let tag_bytes: [u8; BlobTag::SIZE] = builder.buffer[..BlobTag::SIZE].try_into().unwrap();
+        let buf_len = builder.to_bytes_clone().len();
+        let tag_bytes: [u8; BlobTag::SIZE] = builder.to_bytes_clone()[..BlobTag::SIZE].try_into().unwrap();
         let tag = BlobTag::from_bytes(&tag_bytes);
         // next_tag should correspond to the total padded size written to the buffer
         assert_eq!(tag.next_tag(), buf_len);

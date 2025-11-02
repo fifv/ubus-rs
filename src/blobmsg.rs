@@ -98,7 +98,7 @@ impl TryFrom<BlobMsg> for Vec<u8> {
     type Error = UbusError;
     fn try_from(blobmsg: BlobMsg) -> Result<Self, Self::Error> {
         let builder = BlobMsgBuilder::try_from(blobmsg)?;
-        Ok(builder.data().to_owned())
+        Ok(builder.data())
     }
 }
 
@@ -370,78 +370,47 @@ impl TryFrom<BlobMsg> for BlobMsgBuilder {
 
     fn try_from(blobmsg: BlobMsg) -> Result<Self, Self::Error> {
         let name = blobmsg.name;
-        let blob = match blobmsg.data {
-            BlobMsgPayload::String(s) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::STRING, &name);
-                blob.push_str(&s)?;
-                blob
-            }
+        match blobmsg.data {
+            BlobMsgPayload::String(s) => BlobMsgBuilder::from_str(BlobMsgType::STRING, &name, &s),
             BlobMsgPayload::Int64(num) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::INT64, &name);
-                blob.push_int64(num)?;
-                blob
+                BlobMsgBuilder::from_int64(BlobMsgType::INT64, &name, num)
             }
             BlobMsgPayload::Int32(num) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::INT32, &name);
-                blob.push_int32(num)?;
-                blob
+                BlobMsgBuilder::from_int32(BlobMsgType::INT32, &name, num)
             }
             BlobMsgPayload::Int16(num) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::INT16, &name);
-                blob.push_int16(num)?;
-                blob
+                BlobMsgBuilder::from_int16(BlobMsgType::INT16, &name, num)
             }
-            BlobMsgPayload::Int8(num) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::INT8, &name);
-                blob.push_int8(num)?;
-                blob
-            }
+            BlobMsgPayload::Int8(num) => BlobMsgBuilder::from_int8(BlobMsgType::INT8, &name, num),
             BlobMsgPayload::Double(num) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::DOUBLE, &name);
-                blob.push_double(num)?;
-                blob
+                BlobMsgBuilder::from_double(BlobMsgType::DOUBLE, &name, num)
             }
-            BlobMsgPayload::Bool(b) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::BOOL, &name);
-                blob.push_int8(b)?;
-                blob
-            }
+            BlobMsgPayload::Bool(b) => BlobMsgBuilder::from_int8(BlobMsgType::BOOL, &name, b),
             BlobMsgPayload::Unknown(_typeid, _bytes) => {
                 //println!("\"type={} data={:?}\"", typeid, bytes);
                 unimplemented!()
             }
             BlobMsgPayload::Array(list) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::ARRAY, &name);
-                for item in list {
-                    let inner_blob = BlobMsgBuilder::try_from(item).unwrap();
-                    blob.push_bytes(inner_blob.data())?;
+                let mut builder = BlobMsgBuilder::new_extended(BlobMsgType::ARRAY, &name);
+                for blobmsg in list {
+                    let inner_builder = BlobMsgBuilder::try_from(blobmsg).unwrap();
+                    builder.push_bytes(inner_builder.data_as_slice())?;
                 }
-                blob
+                Ok(builder)
             }
             BlobMsgPayload::Table(table) => {
-                let mut blob = BlobMsgBuilder::new_extended(BlobMsgType::TABLE, &name);
+                let mut builder = BlobMsgBuilder::new_extended(BlobMsgType::TABLE, &name);
                 for blobmsg in table {
-                    let inner_blobmsg = BlobMsg {
-                        name: blobmsg.name,
-                        data: blobmsg.data,
-                    };
-                    let inner_blob = BlobMsgBuilder::try_from(inner_blobmsg).unwrap();
-                    //let inner_blob = inner_blob.build();
-                    blob.push_bytes(inner_blob.data())?;
+                    let inner_builder = BlobMsgBuilder::try_from(blobmsg).unwrap();
+                    builder.push_bytes(inner_builder.data_as_slice())?;
                 }
-                blob
+                Ok(builder)
             }
-        };
-        Ok(blob)
+        }
     }
 }
 
 impl BlobMsgBuilder {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self {
-            buffer: bytes.to_vec(),
-        }
-    }
     pub fn new_extended(id: BlobMsgType, name: &str) -> Self {
         // let _phantom = PhantomData::<&mut [u8]>;
         let mut blob = Self { buffer: Vec::new() };
@@ -460,6 +429,54 @@ impl BlobMsgBuilder {
         blob.buffer[..BlobTag::SIZE].copy_from_slice(&tag.to_bytes());
         blob
     }
+
+    /* TODO: maybe these can be merged by generics */
+
+    pub fn from_bytes<'b>(
+        id: BlobMsgType,
+        name: &str,
+        data: impl IntoIterator<Item = &'b u8>,
+    ) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_bytes(data)?;
+        Ok(builder)
+    }
+    pub fn from_int64(id: BlobMsgType, name: &str, data: i64) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_int64(data)?;
+        Ok(builder)
+    }
+    pub fn from_int32(id: BlobMsgType, name: &str, data: i32) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_int32(data)?;
+        Ok(builder)
+    }
+    pub fn from_int16(id: BlobMsgType, name: &str, data: i16) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_int16(data)?;
+        Ok(builder)
+    }
+    pub fn from_int8(id: BlobMsgType, name: &str, data: i8) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_int8(data)?;
+        Ok(builder)
+    }
+    pub fn from_double(id: BlobMsgType, name: &str, data: f64) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_double(data)?;
+        Ok(builder)
+    }
+    pub fn from_bool(id: BlobMsgType, name: &str, data: bool) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_bool(data)?;
+        Ok(builder)
+    }
+    pub fn from_str(id: BlobMsgType, name: &str, data: &str) -> Result<Self, UbusError> {
+        let mut builder = BlobMsgBuilder::new_extended(id, &name);
+        builder.push_str(data)?;
+        Ok(builder)
+    }
+
 
     pub fn tag(&self) -> BlobTag {
         let tag_bytes: [u8; BlobTag::SIZE] = self.buffer[..BlobTag::SIZE].try_into().unwrap();
@@ -524,7 +541,10 @@ impl BlobMsgBuilder {
         self.buffer.len()
     }
 
-    pub fn data(&self) -> &[u8] {
+    pub fn data_as_slice(&self) -> &[u8] {
         &self.buffer
+    }
+    pub fn data(self) -> Vec<u8> {
+        self.buffer
     }
 }

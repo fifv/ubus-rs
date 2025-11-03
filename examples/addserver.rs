@@ -19,10 +19,10 @@ fn main() {
         }
     };
     fn handle_hi(req_args: &MsgTable) -> MsgTable {
-        MsgTable::try_from(r#"{"haha":1}"#).unwrap()
+        MsgTable::try_from(r#"{"haha": true}"#).unwrap()
     }
     let some_captured_value = 1;
-    let () = connection
+    let server_obj = connection
         .add_server(
             obj_path,
             HashMap::<String, UbusMethod>::from([
@@ -48,6 +48,8 @@ fn main() {
             ]),
         )
         .unwrap();
+    
+    connection.listening(server_obj).unwrap();
     // connection.listening(id).unwrap();
     sleep(Duration::from_millis(1000000));
     // println!("{:?}", obj);

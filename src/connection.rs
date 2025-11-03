@@ -282,7 +282,7 @@ impl<T: IO> Connection<T> {
         &mut self,
         obj_path: &str,
         methods: HashMap<String, UbusMethod>,
-    ) -> Result<(), UbusError> {
+    ) -> Result<UbusServerObject, UbusError> {
         let mut server_obj = UbusServerObject::default();
         server_obj.methods = methods;
 
@@ -350,8 +350,17 @@ impl<T: IO> Connection<T> {
                     }
                 }
             };
-        }
+        };
+        Ok(server_obj)
+    }
 
+    /*
+     * server:
+     * receive: invoke: {"objid":2013531835,"method":"hello","data":{"msg":"fsdfsdf"},"user":"fifv","group":"fifv"}
+     * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
+     * reply:   status: {"status":0,"objid":2013531835}
+     */
+    pub fn listening(&mut self, server_obj: UbusServerObject) -> Result<(), UbusError> {
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'message_loop: loop {
             let message = self.next_message()?;
@@ -466,13 +475,4 @@ impl<T: IO> Connection<T> {
             }
         }
     }
-
-    /*
-     * server:
-     * receive: invoke: {"objid":2013531835,"method":"hello","data":{"msg":"fsdfsdf"},"user":"fifv","group":"fifv"}
-     * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
-     * reply:   status: {"status":0,"objid":2013531835}
-     */
-    // pub fn listening(&mut self, objid: u32) -> Result<(), UbusError> {
-    // }
 }

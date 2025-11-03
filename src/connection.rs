@@ -11,6 +11,7 @@ use alloc::string::String;
 use serde_json::json;
 use std::format;
 use std::vec;
+use storage_endian::BigEndian;
 use ubuserror::*;
 
 #[derive(Copy, Clone)]
@@ -65,13 +66,20 @@ impl<T: IO> Connection<T> {
     }
 
     fn header_by_obj_cmd(&mut self, obj_id: u32, cmd: UbusCmdType) -> UbusMsgHeader {
-        self.sequence += 1;
         UbusMsgHeader {
             version: UbusMsgVersion::CURRENT,
             cmd_type: cmd,
-            sequence: self.sequence.into(),
+            sequence: self.generate_new_request_sequence(),
             peer: obj_id.into(),
         }
+    }
+
+    /**
+     * sequence is used to identify session, only client need to generate it, server should reply with same sequence with request's
+     */
+    fn generate_new_request_sequence(&mut self) -> BigEndian<u16> {
+        self.sequence += 1;
+        BigEndian::<u16>::from(self.sequence)
     }
 
     // Get next message from ubus channel (blocking!)
@@ -90,27 +98,28 @@ impl<T: IO> Connection<T> {
         method: &str,
         req_args: MsgTable,
     ) -> Result<MsgTable, UbusError> {
-        let header = self.header_by_obj_cmd(obj, UbusCmdType::INVOKE);
-        let req_blobs: Vec<UbusBlob> = vec![
-            UbusBlob::ObjId(obj),
-            UbusBlob::Method(method.to_string()),
-            UbusBlob::Data(req_args),
-        ];
-        let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
-        // let mut message = UbusMsg::new(&header).unwrap();
-        // message.put(UbusMsgAttr::ObjId(obj))?;
-        // message.put(UbusMsgAttr::Method(method.to_string()))?;
+        let request_sequence = self.generate_new_request_sequence();
 
-        // message.put(UbusMsgAttr::Data(req_args.to_vec()))?;
-
-        self.send(message)?;
+        self.send(UbusMsg {
+            header: UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::INVOKE,
+                sequence: request_sequence,
+                peer: obj.into(),
+            },
+            ubus_blobs: vec![
+                UbusBlob::ObjId(obj),
+                UbusBlob::Method(method.to_string()),
+                UbusBlob::Data(req_args),
+            ],
+        })?;
 
         // FIXME: use Option<>
-        let mut res_args = MsgTable::new();
+        let mut reply_args = MsgTable::new();
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'messages: loop {
             let message = self.next_message()?;
-            if message.header.sequence != header.sequence {
+            if message.header.sequence != request_sequence {
                 // FIXME:
                 // continue;
             }
@@ -121,7 +130,7 @@ impl<T: IO> Connection<T> {
                     for blob in message.ubus_blobs {
                         match blob {
                             UbusBlob::Status(UbusMsgStatus::OK) => {
-                                break 'messages Ok(res_args);
+                                break 'messages Ok(reply_args);
                             }
                             UbusBlob::Status(status) => {
                                 return Err(UbusError::Status(status));
@@ -135,8 +144,8 @@ impl<T: IO> Connection<T> {
                     for blob in message.ubus_blobs {
                         // dbg!(&blob);
                         if let UbusBlob::Data(data) = blob {
-                            res_args = data;
-                            // dbg!(&res_args);
+                            reply_args = data;
+                            // dbg!(&reply_args);
                             continue 'messages;
                         }
                     }
@@ -163,9 +172,9 @@ impl<T: IO> Connection<T> {
         let obj_id = self.lookup_id(obj_path)?;
         let req_args = MsgTable::try_from(req_args)?;
         // dbg!(&args, &req_args);
-        let res_args = self.invoke(obj_id, method, req_args)?;
+        let reply_args = self.invoke(obj_id, method, req_args)?;
 
-        Ok(dbg!(res_args.try_into()?))
+        Ok(dbg!(reply_args.try_into()?))
 
         // dbg!(&bi);
 
@@ -173,7 +182,7 @@ impl<T: IO> Connection<T> {
         //     let mut json = String::new();
         //     json += "{\n";
         //     let mut first = true;
-        //     for msg in res_args.0 {
+        //     for msg in reply_args.0 {
         //         // dbg!(&msg);
         //         if !first {
         //             json += ",\n";
@@ -202,92 +211,73 @@ impl<T: IO> Connection<T> {
     }
 
     pub fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
-        let header = self.header_by_obj_cmd(0, UbusCmdType::LOOKUP);
+        let request_sequence = self.generate_new_request_sequence();
 
-        let req_blobs: Vec<UbusBlob> = obj_path
-            .is_empty()
-            .not()
-            .then(|| UbusBlob::ObjPath(obj_path.to_string()))
-            .into_iter()
-            .collect();
+        self.send(UbusMsg {
+            header: UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::LOOKUP,
+                sequence: request_sequence,
+                peer: 0.into(),
+            },
+            ubus_blobs: obj_path
+                .is_empty()
+                .not()
+                .then(|| UbusBlob::ObjPath(obj_path.to_string()))
+                .into_iter()
+                .collect(),
+        })?;
 
-        let request = UbusMsg::from_header_and_blobs(&header, req_blobs);
-        self.send(request)?;
-
-        // FIXME: use Option<>
-        let mut objs = Vec::new();
-        /* TODO: optimize logic, too much mut, too much duplicate! */
-        'message_iter: loop {
-            let message = self.next_message()?;
-            dbg!(&message);
-            // println!("{:#?}", &message);
-            if message.header.sequence != header.sequence {
-                continue;
-            }
-
-            /* here the `obj` is inserted with some reference from `message`, then if we try to return it, rust ensure `message` should live longer than `obj`   */
-            /* i check the code, message is a lot of slice to a global buffer in Connection, each time next_message() got called, the global buffer got overriden */
-            let mut obj = UbusObject::default();
-
-            match message.header.cmd_type {
-                UbusCmdType::STATUS => {
-                    for blob in message.ubus_blobs {
-                        // dbg!(&blob);
-                        match blob {
-                            UbusBlob::Status(UbusMsgStatus::OK) => {
-                                break 'message_iter Ok(objs);
-                            }
-                            UbusBlob::Status(status) => {
-                                return Err(UbusError::Status(status));
-                            }
-                            _ => {}
-                        }
-                    }
-                    return Err(UbusError::InvalidData("Invalid status message"));
+        let objs = {
+            let mut objs = Vec::new();
+            /* TODO: optimize logic, too much mut, too much duplicate! */
+            'message_iter: loop {
+                let message = self.next_message()?;
+                dbg!(&message);
+                // println!("{:#?}", &message);
+                if message.header.sequence != request_sequence {
+                    continue;
                 }
-                UbusCmdType::DATA => {
-                    for blob in message.ubus_blobs {
-                        match blob {
-                            UbusBlob::ObjPath(path) => obj.path = path.to_string(),
-                            UbusBlob::ObjId(id) => obj.id = id as u32,
-                            UbusBlob::ObjType(ty) => obj.objtype = ty as u32,
-                            UbusBlob::Signature(nested) => {
-                                obj.reported_signature = nested;
-                                // dbg!(&nested);
-                                // for item in nested.0 {
-                                //     let signature = Method {
-                                //         // name: item.name.to_string(),
-                                //         policy: if let BlobMsgPayload::Table(table) = item.data {
-                                //             table
-                                //                 .iter()
-                                //                 .map(|blogmsg| {
-                                //                     if let BlobMsgPayload::Int32(typeid) =
-                                //                         blogmsg.data
-                                //                     {
-                                //                         (
-                                //                             blogmsg.name.to_string(),
-                                //                             BlobMsgType::from(typeid as u32),
-                                //                         )
-                                //                     } else {
-                                //                         panic!()
-                                //                     }
-                                //                 })
-                                //                 .collect()
-                                //         } else {
-                                //             panic!()
-                                //         },
-                                //     };
-                                //     obj.methods.insert(item.name.to_string(), signature);
-                                // }
+
+                /* here the `obj` is inserted with some reference from `message`, then if we try to return it, rust ensure `message` should live longer than `obj`   */
+                /* i check the code, message is a lot of slice to a global buffer in Connection, each time next_message() got called, the global buffer got overriden */
+                let mut obj = UbusObject::default();
+
+                match message.header.cmd_type {
+                    UbusCmdType::STATUS => {
+                        for blob in message.ubus_blobs {
+                            // dbg!(&blob);
+                            match blob {
+                                UbusBlob::Status(UbusMsgStatus::OK) => {
+                                    break 'message_iter Ok(objs);
+                                }
+                                UbusBlob::Status(status) => {
+                                    break 'message_iter Err(UbusError::Status(status));
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
+                        return Err(UbusError::InvalidData("Invalid status message"));
                     }
-                    objs.push(obj);
+                    UbusCmdType::DATA => {
+                        for blob in message.ubus_blobs {
+                            match blob {
+                                UbusBlob::ObjPath(path) => obj.path = path.to_string(),
+                                UbusBlob::ObjId(id) => obj.id = id as u32,
+                                UbusBlob::ObjType(ty) => obj.objtype = ty as u32,
+                                UbusBlob::Signature(nested) => {
+                                    obj.reported_signature = nested;
+                                }
+                                _ => {}
+                            }
+                        }
+                        objs.push(obj);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
+        };
+        objs
     }
 
     /**
@@ -297,67 +287,76 @@ impl<T: IO> Connection<T> {
     pub fn add_server(
         &mut self,
         obj_path: &str,
-        methods: HashMap<String, MethodCallback>,
+        methods: HashMap<String, UbusMethod>,
     ) -> Result<(), UbusError> {
-        // FIXME: official ubus cli call stuck while data in monitor looks good
-        let header = self.header_by_obj_cmd(0, UbusCmdType::ADD_OBJECT);
-        let req_blobs: Vec<UbusBlob> = vec![
-            UbusBlob::ObjPath(obj_path.to_string()),
-            UbusBlob::Signature(
-                methods
-                    .iter()
-                    .map(|(method, cb)| BlobMsg {
-                        name: method.to_string(),
-                        data: BlobMsgPayload::Table(Vec::new()),
-                    })
-                    .collect::<Vec<BlobMsg>>()
-                    .into(),
-            ),
-        ];
-        let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
-        self.send(message)?;
-
-        let mut server_obj = UbusObject::default();
+        let mut server_obj = UbusServerObject::default();
         server_obj.methods = methods;
 
-        /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
-        let res_args = 'message_loop: loop {
-            let message = self.next_message()?;
-            if message.header.sequence != header.sequence {
-                continue;
-            }
-            dbg!(&message);
+        // FIXME\: official ubus cli call stuck while data in monitor looks good <- fixed: replied seq should be same as requested
+        {
+            let request_sequence = self.generate_new_request_sequence();
+            self.send(UbusMsg {
+                header: UbusMsgHeader {
+                    version: UbusMsgVersion::CURRENT,
+                    cmd_type: UbusCmdType::ADD_OBJECT,
+                    sequence: request_sequence,
+                    peer: 0.into(),
+                },
+                ubus_blobs: vec![
+                    UbusBlob::ObjPath(obj_path.to_string()),
+                    UbusBlob::Signature(
+                        server_obj
+                            .methods
+                            .iter()
+                            .map(|(method, cb)| BlobMsg {
+                                name: method.to_string(),
+                                data: BlobMsgPayload::Table(Vec::new()),
+                            })
+                            .collect::<Vec<BlobMsg>>()
+                            .into(),
+                    ),
+                ],
+            })?;
 
-            match message.header.cmd_type {
-                UbusCmdType::STATUS => {
-                    for blob in message.ubus_blobs {
-                        match blob {
-                            UbusBlob::Status(UbusMsgStatus::OK) => {
-                                break 'message_loop Ok(());
+            /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
+            let reply_args = 'message_loop: loop {
+                let message = self.next_message()?;
+                if message.header.sequence != request_sequence {
+                    continue;
+                }
+                dbg!(&message);
+
+                match message.header.cmd_type {
+                    UbusCmdType::STATUS => {
+                        for blob in message.ubus_blobs {
+                            match blob {
+                                UbusBlob::Status(UbusMsgStatus::OK) => {
+                                    break 'message_loop Ok(());
+                                }
+                                UbusBlob::Status(status) => {
+                                    break 'message_loop Err(UbusError::Status(status));
+                                }
+                                _ => {}
                             }
-                            UbusBlob::Status(status) => {
-                                break 'message_loop Err(UbusError::Status(status));
+                        }
+                        break 'message_loop Err(UbusError::InvalidData("Invalid status message"));
+                    }
+                    UbusCmdType::DATA => {
+                        for blob in message.ubus_blobs {
+                            // dbg!(&blob);
+                            match blob {
+                                UbusBlob::ObjId(id) => server_obj.id = id,
+                                UbusBlob::ObjType(objtype) => server_obj.objtype = objtype,
+                                _ => todo!(),
                             }
-                            _ => {}
                         }
                     }
-                    break 'message_loop Err(UbusError::InvalidData("Invalid status message"));
-                }
-                UbusCmdType::DATA => {
-                    for blob in message.ubus_blobs {
-                        // dbg!(&blob);
-                        match blob {
-                            UbusBlob::ObjId(id) => server_obj.id = id,
-                            UbusBlob::ObjType(objtype) => server_obj.objtype = objtype,
-                            _ => todo!(),
-                        }
+                    unknown => {
+                        dbg!(unknown);
                     }
                 }
-                unknown => {
-                    dbg!(unknown);
-                }
-            }
-        };
+            };
+        }
 
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'message_loop: loop {
@@ -366,9 +365,11 @@ impl<T: IO> Connection<T> {
             //     continue;
             // }
             dbg!(&message);
-            let peer: u32 = message.header.peer.into();
 
             match message.header.cmd_type {
+                /*
+                 * server object normally won't got a status, instead, server will send back a status OK to terminate client
+                 */
                 UbusCmdType::STATUS => {
                     for blob in message.ubus_blobs {
                         match blob {
@@ -384,53 +385,84 @@ impl<T: IO> Connection<T> {
                     return Err(UbusError::InvalidData("Invalid status message"));
                 }
                 UbusCmdType::INVOKE => {
+                    /*
+                     * client's INVOKE contains:
+                     *      - `message.header.peer`         : the client's obj_id, should be used as `message.header.peer` when reply
+                     *      - `message.header.sequence`     : used to identify current session, should be used as `message.header.sequence` when reply
+                     *      - `message.ubus_blobs.?.ObjId`  : current server obj_id, should be used as `message.ubus_blobs.?.ObjId` when reply.
+                     *                                        this is same as the response from add_server
+                     *      - `message.ubus_blobs.?.Method` : client want to call this method
+                     *      - `message.ubus_blobs.?.Data`   : client requested with this json
+                     */
                     // TODO: use Option
-                    let mut client_obj_id = 0;
-                    let mut method_name = String::new();
-                    let mut req_args = MsgTable::new();
-                    for blob in message.ubus_blobs {
-                        // dbg!(&blob);
-                        match blob {
-                            UbusBlob::ObjId(id) => client_obj_id = id,
-                            UbusBlob::Method(method) => method_name = method,
-                            UbusBlob::Data(msg_table) => req_args = msg_table,
-                            _ => {}
+                    let (client_obj_id, method_name, req_args) = {
+                        let mut client_obj_id = 0;
+                        let mut method_name = String::new();
+                        let mut req_args = MsgTable::new();
+                        for blob in message.ubus_blobs {
+                            // dbg!(&blob);
+                            match blob {
+                                UbusBlob::ObjId(id) => client_obj_id = id,
+                                UbusBlob::Method(method) => method_name = method,
+                                UbusBlob::Data(msg_table) => req_args = msg_table,
+                                _ => {}
+                            }
                         }
-                    }
+                        (client_obj_id, method_name, req_args)
+                    };
+
+                    /* reply to client */
 
                     match server_obj.methods.get(&method_name) {
                         Some(method) => {
-                            let res_args = method(&req_args);
+                            let reply_args = method(&req_args);
                             /* here client_obj_id == server objid */
-                            let header = self.header_by_obj_cmd(peer, UbusCmdType::DATA);
-                            let req_blobs: Vec<UbusBlob> = vec![
-                                UbusBlob::ObjId(client_obj_id),
-                                // UbusBlob::Data(MsgTable::try_from(json!({
-                                //     "wtf": 1
-                                // }))?),
-                                UbusBlob::Data(res_args),
-                            ];
-                            let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
-                            self.send(message)?;
+                            self.send(UbusMsg::from_header_and_blobs(
+                                &UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::DATA,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                vec![
+                                    UbusBlob::ObjId(client_obj_id),
+                                    // UbusBlob::Data(MsgTable::try_from(json!({
+                                    //     "wtf": 1
+                                    // }))?),
+                                    UbusBlob::Data(reply_args),/* data is moved to enum, then moved to UbusMsg */
+                                ],
+                            ))?;
 
-                            sleep(Duration::from_millis(400));
+                            // dbg!(reply_args);
 
-                            let header = self.header_by_obj_cmd(peer, UbusCmdType::STATUS);
-                            let req_blobs: Vec<UbusBlob> = vec![
-                                UbusBlob::ObjId(client_obj_id),
-                                UbusBlob::Status(UbusMsgStatus::OK),
-                            ];
-                            let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
-                            self.send(message)?;
+                            // sleep(Duration::from_millis(400));
+
+                            self.send(UbusMsg::from_header_and_blobs(
+                                &UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::STATUS,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                vec![
+                                    UbusBlob::ObjId(client_obj_id),
+                                    UbusBlob::Status(UbusMsgStatus::OK),
+                                ],
+                            ))?;
                         }
                         None => {
-                            let header = self.header_by_obj_cmd(peer, UbusCmdType::STATUS);
-                            let req_blobs: Vec<UbusBlob> = vec![
-                                UbusBlob::ObjId(client_obj_id),
-                                UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
-                            ];
-                            let message = UbusMsg::from_header_and_blobs(&header, req_blobs);
-                            self.send(message)?;
+                            self.send(UbusMsg::from_header_and_blobs(
+                                &UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::STATUS,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                vec![
+                                    UbusBlob::ObjId(client_obj_id),
+                                    UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
+                                ],
+                            ))?;
                         }
                     }
                 }
@@ -439,7 +471,6 @@ impl<T: IO> Connection<T> {
                 }
             }
         }
-        res_args
     }
 
     /*

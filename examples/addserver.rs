@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env, path::Path, thread::sleep, time::Duration};
 
-use ubus::{MethodCallback, MsgTable, UbusError, UbusObject};
+use serde_json::json;
+use ubus::{MsgTable, UbusMethod};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -20,23 +21,29 @@ fn main() {
     fn handle_hi(req_args: &MsgTable) -> MsgTable {
         MsgTable::try_from(r#"{"haha":1}"#).unwrap()
     }
+    let some_captured_value = 1;
     let () = connection
         .add_server(
             obj_path,
-            HashMap::<String, MethodCallback>::from([
-                (
-                    "hi".to_string(),
-                    handle_hi as MethodCallback,
-                ),
+            HashMap::<String, UbusMethod>::from([
+                ("hi".to_string(), Box::new(handle_hi) as UbusMethod),
                 (
                     "hii".to_string(),
-                    (|_| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap())
-                        as MethodCallback,
+                    Box::new(|req_args: &MsgTable| {
+                        MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
+                    }),
                 ),
                 (
                     "echo".to_string(),
-                    (|req_args| req_args.to_owned())
-                        as MethodCallback,
+                    Box::new(|req_args: &MsgTable| req_args.to_owned()),
+                ),
+                (
+                    "closure".to_string(),
+                    Box::new(move |req_args: &MsgTable| {
+                        json!({"captured-value":some_captured_value})
+                            .try_into()
+                            .unwrap()
+                    }),
                 ),
             ]),
         )

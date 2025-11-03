@@ -1,7 +1,6 @@
-use std::{convert::TryInto, path::Path};
+use std::path::Path;
 
-use serde_json::Value;
-use ubus::{BlobMsg, MsgTable, UbusObject};
+use ubus::MsgTable;
 
 fn main() {
     let obj_path = "fifv";
@@ -25,15 +24,15 @@ fn main() {
     dbg!("{}", &obj);
     // let obj: UbusObject = serde_json::from_str(&obj).unwrap();
     let req_args = MsgTable::try_from(req_args).unwrap();
-    let res_args = connection.invoke(obj.id, method, req_args).unwrap();
-    println!("{}", String::try_from(res_args).unwrap());
+    let reply_args = connection.invoke(obj.id, method, req_args).unwrap();
+    println!("{}", String::try_from(reply_args).unwrap());
 
     // Value::from(bi);
     // let json_str = {
     //     let mut json_str = String::new();
     //     json_str = "{\n".to_string();
     //     let mut first = true;
-    //     for x in res_args.0 {
+    //     for x in reply_args.0 {
     //         if !first {
     //             json_str += ",\n";
     //         }

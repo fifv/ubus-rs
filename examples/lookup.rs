@@ -1,7 +1,5 @@
 use std::{env, path::Path};
 
-use ubus::{UbusError, UbusObject};
-
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";

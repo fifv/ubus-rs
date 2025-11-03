@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 use ubus::*;
 
 #[test]
-fn test() {
+fn test_invoke_with_correct_raw_bytes() {
     let (client, mut server) = UnixStream::pair().unwrap();
 
     std::thread::spawn(move || {
@@ -19,11 +19,7 @@ fn test() {
     let mut connection = Connection::new(client).unwrap();
 
     connection
-        .invoke(0x13333337, "info", &[], |x| {
-            for i in x {
-                std::dbg!(i);
-            }
-        })
+        .invoke(0x13333337, "info", r#"{}"#.try_into().unwrap())
         .unwrap();
 }
 

@@ -34,7 +34,9 @@ impl std::fmt::Debug for UbusServerObject {
     }
 }
 
-
+/**
+ * used in look up
+ */
 #[derive(Default, Debug, Clone)]
 pub struct UbusObject {
     pub path: String,

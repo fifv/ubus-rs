@@ -11,6 +11,8 @@ use crate::{Blob, BlobPayloadParser, BlobTag, UbusError};
 
 pub type JsonObject = serde_json::Map<String, Value>;
 
+/* TODO: restructure this file, looks so scattered */
+
 values!(pub BlobMsgType(u32) {
     UNSPEC = 0,
     ARRAY  = 1,
@@ -20,7 +22,7 @@ values!(pub BlobMsgType(u32) {
     INT32  = 5,
     INT16  = 6,
     BOOL   = 7,
-    INT8   = 7,
+    INT8   = 7, /* ubus use int8 as true/false */
     DOUBLE = 8,
 });
 
@@ -31,6 +33,19 @@ values!(pub BlobMsgType(u32) {
 pub struct BlobMsg {
     pub name: String,
     pub data: BlobMsgPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BlobMsgPayload {
+    Array(Vec<BlobMsg>),
+    Table(Vec<BlobMsg>),
+    String(String),
+    Int64(i64),
+    Int32(i32),
+    Int16(i16),
+    Bool(bool),
+    Double(f64),
+    Unknown(u32, Vec<u8>),
 }
 
 /**
@@ -80,7 +95,7 @@ impl TryFrom<&[u8]> for BlobMsg {
             BlobMsgType::INT64 => BlobMsgPayload::Int64(parser.try_into()?),
             BlobMsgType::INT32 => BlobMsgPayload::Int32(parser.try_into()?),
             BlobMsgType::INT16 => BlobMsgPayload::Int16(parser.try_into()?),
-            BlobMsgType::INT8 => BlobMsgPayload::Int8(parser.try_into()?),
+            BlobMsgType::BOOL => BlobMsgPayload::Bool(parser.try_into()?),
             BlobMsgType::DOUBLE => BlobMsgPayload::Double(parser.try_into()?),
             id => BlobMsgPayload::Unknown(id.value(), parser.into()),
         };
@@ -102,20 +117,6 @@ impl TryFrom<BlobMsg> for Vec<u8> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum BlobMsgPayload {
-    Array(Vec<BlobMsg>),
-    Table(Vec<BlobMsg>),
-    String(String),
-    Int64(i64),
-    Int32(i32),
-    Int16(i16),
-    Int8(i8),
-    Bool(i8),
-    Double(f64),
-    Unknown(u32, Vec<u8>),
-}
-
 /**
  * convert between Value and BlobMsgPayload
  */
@@ -124,13 +125,11 @@ impl From<Value> for BlobMsgPayload {
         match json_value {
             Value::Null => BlobMsgPayload::Unknown(0, vec![]),
 
-            Value::Bool(b) => BlobMsgPayload::Bool(b as i8),
+            Value::Bool(b) => BlobMsgPayload::Bool(b),
 
             Value::Number(num) => {
                 if let Some(i) = num.as_i64() {
-                    if i <= i8::MAX as i64 && i >= i8::MIN as i64 {
-                        BlobMsgPayload::Int8(i as i8)
-                    } else if i <= i16::MAX as i64 && i >= i16::MIN as i64 {
+                    if i <= i16::MAX as i64 && i >= i16::MIN as i64 {
                         BlobMsgPayload::Int16(i as i16)
                     } else if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
                         BlobMsgPayload::Int32(i as i32)
@@ -171,8 +170,7 @@ impl TryFrom<BlobMsgPayload> for Value {
     type Error = UbusError;
     fn try_from(blobmsg_payload: BlobMsgPayload) -> Result<Self, Self::Error> {
         Ok(match blobmsg_payload {
-            BlobMsgPayload::Bool(b) => Value::Bool(b != 0),
-            BlobMsgPayload::Int8(v) => Value::Number(v.into()),
+            BlobMsgPayload::Bool(b) => Value::Bool(b),
             BlobMsgPayload::Int16(v) => Value::Number(v.into()),
             BlobMsgPayload::Int32(v) => Value::Number(v.into()),
             BlobMsgPayload::Int64(v) => Value::Number(v.into()),
@@ -208,6 +206,15 @@ pub struct MsgTable(pub Vec<BlobMsg>);
 impl MsgTable {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub fn to_string(self) -> Result<String, UbusError> {
+        // String::try_from(self)
+        self.try_into()
+    }
+    pub fn to_string_pretty(self) -> Result<String, UbusError> {
+        // String::try_from(self)
+        Ok(serde_json::to_string_pretty(&JsonObject::try_from(self)?)
+            .expect("serialize serde_json::Map<String, Value> shouldn't fail"))
     }
 }
 impl Default for MsgTable {
@@ -304,6 +311,8 @@ impl TryFrom<MsgTable> for JsonObject {
             })
     }
 }
+/* TODO: use something like Map<String, Map<String, BlobMsgType>> to describe UbusBlob::Signature */
+// pub struct MethodSignature(Vec<>)
 
 impl fmt::Display for BlobMsgPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -314,8 +323,7 @@ impl fmt::Display for BlobMsgPayload {
             BlobMsgPayload::Int64(num) => write!(f, "{}", num),
             BlobMsgPayload::Int32(num) => write!(f, "{}", num),
             BlobMsgPayload::Int16(num) => write!(f, "{}", num),
-            BlobMsgPayload::Int8(num) => write!(f, "{}", num),
-            BlobMsgPayload::Bool(num) => write!(f, "{}", *num == 1),
+            BlobMsgPayload::Bool(num) => write!(f, "{}", num),
             BlobMsgPayload::Double(num) => write!(f, "{}", num),
             BlobMsgPayload::Unknown(typeid, bytes) => {
                 write!(f, "\"type={} data={:?}\"", typeid, bytes)
@@ -395,11 +403,10 @@ impl TryFrom<BlobMsg> for BlobMsgBuilder {
             BlobMsgPayload::Int16(num) => {
                 BlobMsgBuilder::from_int16(BlobMsgType::INT16, &name, num)
             }
-            BlobMsgPayload::Int8(num) => BlobMsgBuilder::from_int8(BlobMsgType::INT8, &name, num),
             BlobMsgPayload::Double(num) => {
                 BlobMsgBuilder::from_double(BlobMsgType::DOUBLE, &name, num)
             }
-            BlobMsgPayload::Bool(b) => BlobMsgBuilder::from_int8(BlobMsgType::BOOL, &name, b),
+            BlobMsgPayload::Bool(b) => BlobMsgBuilder::from_bool(BlobMsgType::BOOL, &name, b),
             BlobMsgPayload::Unknown(_typeid, _bytes) => {
                 //println!("\"type={} data={:?}\"", typeid, bytes);
                 unimplemented!()
@@ -470,11 +477,6 @@ impl BlobMsgBuilder {
         builder.push_int16(data)?;
         Ok(builder)
     }
-    pub fn from_int8(id: BlobMsgType, name: &str, data: i8) -> Result<Self, UbusError> {
-        let mut builder = BlobMsgBuilder::new_extended(id, &name);
-        builder.push_int8(data)?;
-        Ok(builder)
-    }
     pub fn from_double(id: BlobMsgType, name: &str, data: f64) -> Result<Self, UbusError> {
         let mut builder = BlobMsgBuilder::new_extended(id, &name);
         builder.push_double(data)?;
@@ -522,11 +524,6 @@ impl BlobMsgBuilder {
 
     pub fn push_int16(&mut self, data: i16) -> Result<(), UbusError> {
         //self.id = BlobMsgType::INT16.value();
-        self.push_bytes(&data.to_be_bytes())
-    }
-
-    pub fn push_int8(&mut self, data: i8) -> Result<(), UbusError> {
-        //self.id = BlobMsgType::INT8.value();
         self.push_bytes(&data.to_be_bytes())
     }
 

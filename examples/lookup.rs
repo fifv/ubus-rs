@@ -18,7 +18,16 @@ fn main() {
     let objs = connection.lookup(obj_path).unwrap();
     // let obj_json = serde_json::to_string_pretty(&obj_json).unwrap();
 
-    println!("{:#?}", &objs);
+    for obj in objs {
+        println!(
+            "`{}` (ObjId={:x} ObjType={:x}) {}",
+            obj.path,
+            obj.id,
+            obj.objtype,
+            obj.reported_signature.to_string_pretty().unwrap()
+        )
+    }
+    // println!("{:#?}", &objs);
     // let obj: UbusObject = serde_json::from_str(&obj_json).unwrap();
     // println!("{:?}", obj);
 }

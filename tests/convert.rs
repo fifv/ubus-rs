@@ -6,7 +6,6 @@
 mod tests {
     use ubus::{Blob, BlobBuilder, BlobIter, BlobTag, UbusBlob, UbusBlobType};
 
-    use super::*;
     use core::convert::TryFrom;
 
     #[test]

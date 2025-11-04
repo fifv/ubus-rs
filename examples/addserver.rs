@@ -48,8 +48,21 @@ fn main() {
             ]),
         )
         .unwrap();
-    
-    connection.listening(server_obj).unwrap();
+
+    let server_obj2 = connection
+        .add_server(
+            "t2",
+            HashMap::<String, UbusMethod>::from([(
+                "hi".to_string(),
+                Box::new(|req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap())
+                    as UbusMethod,
+            )]),
+        )
+        .unwrap();
+
+    connection
+        .listening([server_obj, server_obj2].into())
+        .unwrap();
     // connection.listening(id).unwrap();
     sleep(Duration::from_millis(1000000));
     // println!("{:?}", obj);

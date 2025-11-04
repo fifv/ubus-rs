@@ -3,7 +3,8 @@ use std::{collections::HashMap, env, path::Path, thread::sleep, time::Duration};
 use serde_json::json;
 use ubus::{MsgTable, UbusMethod};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "ttt";
     if args.len() > 1 {
@@ -11,7 +12,7 @@ fn main() {
     }
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
-    let mut connection = match ubus::Connection::connect(&socket) {
+    let mut connection = match ubus::Connection::connect(&socket).await {
         Ok(connection) => connection,
         Err(err) => {
             eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
@@ -47,6 +48,7 @@ fn main() {
                 ),
             ]),
         )
+        .await
         .unwrap();
 
     let server_obj2 = connection
@@ -58,10 +60,12 @@ fn main() {
                     as UbusMethod,
             )]),
         )
+        .await
         .unwrap();
 
     connection
         .listening([server_obj, server_obj2].into())
+        .await
         .unwrap();
     // connection.listening(id).unwrap();
     sleep(Duration::from_millis(1000000));

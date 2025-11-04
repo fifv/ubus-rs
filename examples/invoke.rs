@@ -2,7 +2,8 @@ use std::path::Path;
 
 use ubus::MsgTable;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let obj_path = "fifv";
     let method = "echo";
     let req_args = r#"{"name":"eth0"}"#;
@@ -14,17 +15,18 @@ fn main() {
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
     let mut connection = ubus::Connection::connect(&socket)
+        .await
         .map_err(|err| {
             eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
             err
         })
         .unwrap();
-    let objs = connection.lookup(obj_path).unwrap();
+    let objs = connection.lookup(obj_path).await.unwrap();
     let obj = objs.get(0).unwrap();
     dbg!("{}", &obj);
     // let obj: UbusObject = serde_json::from_str(&obj).unwrap();
     let req_args = MsgTable::try_from(req_args).unwrap();
-    let reply_args = connection.invoke(obj.id, method, req_args).unwrap();
+    let reply_args = connection.invoke(obj.id, method, req_args).await.unwrap();
     println!("{}", String::try_from(reply_args).unwrap());
 
     // Value::from(bi);

@@ -1,21 +1,25 @@
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+
 use super::*;
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-impl IO for UnixStream {
+impl AsyncIo for UnixStream {
     type Error = std::io::Error;
-    fn put(&mut self, data: &[u8]) -> Result<(), UbusError> {
-        self.write_all(data).map_err(UbusError::IO)
+    async fn put(&mut self, data: &[u8]) -> Result<(), UbusError> {
+        self.write_all(data).await.map_err(UbusError::IO)
     }
-    fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError> {
-        self.read_exact(data).map_err(UbusError::IO)
+    async fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError> {
+        self.read_exact(data)
+            .await
+            .map_err(UbusError::IO)
+            .and(Ok(()))
     }
 }
 
 impl Connection<UnixStream> {
-    pub fn connect(path: &Path) -> Result<Self, UbusError> {
-        Self::new(UnixStream::connect(path).map_err(UbusError::IO)?)
+    pub async fn connect(path: &Path) -> Result<Self, UbusError> {
+        Self::new(UnixStream::connect(path).await.map_err(UbusError::IO)?).await
     }
 }
 

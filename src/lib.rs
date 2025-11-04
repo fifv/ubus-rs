@@ -144,10 +144,10 @@ impl<T> From<core::convert::Infallible> for Error<T> {
 
 pub trait IOError {}
 
-pub trait IO {
+pub trait AsyncIo {
     type Error: IOError;
-    fn put(&mut self, data: &[u8]) -> Result<(), UbusError>;
-    fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;
+    async fn put(&mut self, data: &[u8]) -> Result<(), UbusError>;
+    async fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;
 }
 
 mod blob;

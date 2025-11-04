@@ -1,23 +1,25 @@
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::println;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+};
 use ubus::*;
 
-#[test]
-fn test() {
+#[tokio::test]
+async fn test() {
     let (client, mut server) = UnixStream::pair().unwrap();
 
-    std::thread::spawn(move || {
-        server.write_all(TEST_HELLO).unwrap();
+    tokio::spawn(async move {
+        server.write_all(TEST_HELLO).await.unwrap();
         let mut command = [0u8; 12];
-        server.read_exact(&mut command).unwrap();
+        server.read_exact(&mut command).await.unwrap();
         assert_eq!(command, TEST_TX);
         // for i in TEST_RX {
         //     server.write_all(i).unwrap();
         // }
     });
 
-    let mut connection = Connection::new(client).unwrap();
+    let mut connection = Connection::new(client).await.unwrap();
 
     let obj = connection
         .lookup(
@@ -30,6 +32,7 @@ fn test() {
                 std::println!(")");
             }, */
         )
+        .await
         .unwrap();
     println!("\n{:?}", obj);
 }

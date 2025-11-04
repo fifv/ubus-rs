@@ -1,6 +1,7 @@
 use std::{env, path::Path};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
     if args.len() > 1 {
@@ -8,14 +9,14 @@ fn main() {
     }
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
-    let mut connection = match ubus::Connection::connect(&socket) {
+    let mut connection = match ubus::Connection::connect(&socket).await {
         Ok(connection) => connection,
         Err(err) => {
             eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
             return;
         }
     };
-    let objs = connection.lookup(obj_path).unwrap();
+    let objs = connection.lookup(obj_path).await.unwrap();
     // let obj_json = serde_json::to_string_pretty(&obj_json).unwrap();
 
     for obj in objs {

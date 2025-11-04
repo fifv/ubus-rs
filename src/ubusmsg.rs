@@ -1,4 +1,4 @@
-use crate::{BlobIter, BlobTag, IO, UbusBlob, UbusBlobType, UbusError};
+use crate::{AsyncIo, BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
 use serde::{Deserialize, Serialize};
@@ -71,22 +71,22 @@ pub struct UbusMsg {
 }
 
 impl UbusMsg {
-    pub fn from_io<T: IO>(io: &mut T) -> Result<Self, UbusError> {
+    pub async fn from_io<T: AsyncIo>(io: &mut T) -> Result<Self, UbusError> {
         /* read ubus message header */
         let mut ubusmsg_header_buffer = [0u8; UbusMsgHeader::SIZE];
-        io.get(&mut ubusmsg_header_buffer)?;
+        io.get(&mut ubusmsg_header_buffer).await?;
         let header = UbusMsgHeader::from_bytes(ubusmsg_header_buffer);
         valid_data!(header.version == UbusMsgVersion::CURRENT, "Wrong version");
 
         /* read the container blob header */
         let mut ubusmsg_blob_header_buffer = [0u8; BlobTag::SIZE];
-        io.get(&mut ubusmsg_blob_header_buffer)?;
+        io.get(&mut ubusmsg_blob_header_buffer).await?;
         let tag = BlobTag::from_bytes(&ubusmsg_blob_header_buffer);
         tag.is_valid()?;
 
         /* use the length extracted from blob header, read such length of blob data  */
         let mut ubusmsg_data_buffer = vec![0u8; tag.inner_len()];
-        io.get(&mut ubusmsg_data_buffer)?;
+        io.get(&mut ubusmsg_data_buffer).await?;
         let blobs = BlobIter::new(&ubusmsg_data_buffer)
             .map(|blob| blob.try_into())
             .try_collect::<Vec<UbusBlob>>()?;

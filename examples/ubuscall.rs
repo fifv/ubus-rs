@@ -2,7 +2,8 @@ use serde_json::{Value, to_string_pretty};
 use std::env;
 use std::path::Path;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
     let mut method = "";
@@ -22,14 +23,14 @@ fn main() {
 
     let socket = Path::new("/var/run/ubus/ubus.sock");
 
-    let mut connection = match ubus::Connection::connect(&socket) {
+    let mut connection = match ubus::Connection::connect(&socket).await {
         Ok(connection) => connection,
         Err(err) => {
             eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
             return;
         }
     };
-    match connection.call(obj_path, method, data) {
+    match connection.call(obj_path, method, data).await {
         Ok(json) => {
             // println!("{}", json);
             let parsed: Value = serde_json::from_str(&json).unwrap();

@@ -60,12 +60,15 @@ pub struct Connection<T: AsyncIo> {
      */
     invoke_receiver: tokio::sync::mpsc::Sender<UbusMsg>,
     invoke_sender: tokio::sync::mpsc::Receiver<UbusMsg>,
+    message_sender_tx: tokio::sync::mpsc::Sender<UbusMsg>,
+    message_sender_rx: tokio::sync::mpsc::Receiver<UbusMsg>,
 }
 
 impl<T: AsyncIo> Connection<T> {
     /// Create a new ubus connection from an existing IO
     pub async fn new(io: T) -> Result<Self, UbusError> {
         let (invoke_receiver, invoke_sender) = mpsc::channel(8);
+        let (message_sender_tx, message_sender_rx) = mpsc::channel(8);
         let mut conn = Self {
             io,
             // peer: 0,
@@ -75,6 +78,8 @@ impl<T: AsyncIo> Connection<T> {
             reply_receivers: HashMap::new(),
             invoke_receiver,
             invoke_sender,
+            message_sender_rx,
+            message_sender_tx,
         };
 
         // ubus server should say hello on connect
@@ -434,7 +439,11 @@ impl<T: AsyncIo> Connection<T> {
      * FIXME: the read loop conflict with client read response after invoke
      *
      */
-    pub async fn listening(&mut self) -> Result<(), UbusError> {
+    pub async fn listening(
+        &self,
+        mut invoke_sender: mpsc::Receiver<UbusMsg>,
+        message_sender_tx: tokio::sync::mpsc::Sender<UbusMsg>,
+    ) -> Result<(), UbusError> {
         /* FIXME: it may be not ideal to abuse ? to throw error, each error should be handled correctly */
         // let server_objs_map = HashMap::<u32, UbusServerObject>::from_iter(
         //     server_objs.into_iter().map(|obj| (obj.id, obj)),
@@ -442,7 +451,10 @@ impl<T: AsyncIo> Connection<T> {
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
 
         loop {
-            let message = self.invoke_sender.recv().await.ok_or(UbusError::UnexpectChannelClosed())?;
+            let message = invoke_sender
+                .recv()
+                .await
+                .ok_or(UbusError::UnexpectChannelClosed())?;
             // if message.header.sequence != header.sequence {
             //     continue;
             // }
@@ -507,7 +519,7 @@ impl<T: AsyncIo> Connection<T> {
                                     tokio::spawn(async {});
                                     let reply_args = method(&req_args);
                                     /* here client_obj_id == server objid */
-                                    self.send_message(UbusMsg{
+                                    message_sender_tx.send(UbusMsg{
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::DATA,
@@ -518,13 +530,13 @@ impl<T: AsyncIo> Connection<T> {
                                             UbusBlob::ObjId(requested_server_obj_id),
                                             UbusBlob::Data(reply_args),/* data is moved to enum, then moved to UbusMsg */
                                         ],
-                                    }).await?;
+                                    }).await.unwrap();
 
                                     // dbg!(reply_args);
 
                                     // sleep(Duration::from_millis(400));
 
-                                    self.send_message(UbusMsg {
+                                    message_sender_tx.send(UbusMsg {
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::STATUS,
@@ -536,11 +548,11 @@ impl<T: AsyncIo> Connection<T> {
                                             UbusBlob::Status(UbusMsgStatus::OK),
                                         ],
                                     })
-                                    .await?;
+                                    .await.unwrap();
                                 }
                                 None => {
                                     /* method not found */
-                                    self.send_message(UbusMsg {
+                                    message_sender_tx.send(UbusMsg {
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::STATUS,
@@ -552,12 +564,12 @@ impl<T: AsyncIo> Connection<T> {
                                             UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
                                         ],
                                     })
-                                    .await?;
+                                    .await.unwrap();
                                 }
                             }
                         } else {
                             /* server obj not found */
-                            self.send_message(UbusMsg {
+                            message_sender_tx.send(UbusMsg {
                                 header: UbusMsgHeader {
                                     version: UbusMsgVersion::CURRENT,
                                     cmd_type: UbusCmdType::STATUS,
@@ -569,7 +581,7 @@ impl<T: AsyncIo> Connection<T> {
                                     UbusBlob::Status(UbusMsgStatus::NOT_FOUND),
                                 ],
                             })
-                            .await?;
+                            .await.unwrap();
                         }
                     };
                 }
@@ -582,40 +594,43 @@ impl<T: AsyncIo> Connection<T> {
     }
 
     pub async fn run_message_manager(&mut self) -> Result<(), UbusError> {
-        loop {
-            let message = self.next_message().await?;
-            match message {
-                UbusMsg {
-                    header:
-                        UbusMsgHeader {
-                            cmd_type: UbusCmdType::INVOKE,
-                            version: _,
-                            sequence: _,
-                            peer: _,
-                        },
-                    ubus_blobs: _,
-                } => {
-                    self.invoke_receiver
-                        .send(message)
-                        .await
-                        .expect("why the rx closed?");
-                }
-                UbusMsg {
-                    header:
-                        UbusMsgHeader {
-                            cmd_type: _,
-                            version: _,
-                            sequence: seq,
-                            peer: _,
-                        },
-                    ubus_blobs: _,
-                } => {
-                    if let Some(receiver) = self.reply_receivers.get(&seq.into()) {
-                        receiver.send(message).await.expect("why the rx closed?");
+        tokio::spawn(async move {
+            loop {
+                let message = self.next_message().await?;
+                match message {
+                    UbusMsg {
+                        header:
+                            UbusMsgHeader {
+                                cmd_type: UbusCmdType::INVOKE,
+                                version: _,
+                                sequence: _,
+                                peer: _,
+                            },
+                        ubus_blobs: _,
+                    } => {
+                        self.invoke_receiver
+                            .send(message)
+                            .await
+                            .expect("why the rx closed?");
+                    }
+                    UbusMsg {
+                        header:
+                            UbusMsgHeader {
+                                cmd_type: _,
+                                version: _,
+                                sequence: seq,
+                                peer: _,
+                            },
+                        ubus_blobs: _,
+                    } => {
+                        if let Some(receiver) = self.reply_receivers.get(&seq.into()) {
+                            receiver.send(message).await.expect("why the rx closed?");
+                        }
                     }
                 }
             }
-        }
+        });
+        Ok(())
     }
 
     /* UNIMPLEMENTED */

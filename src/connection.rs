@@ -1,11 +1,12 @@
 use crate::*;
 
 use core::{default, ops::Not};
-use std::{collections::HashMap, dbg, println, string::ToString, vec::Vec};
+use std::{collections::HashMap, dbg, println, random::random, string::ToString, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
 use std::vec;
 use storage_endian::BigEndian;
+use tokio::sync::mpsc;
 use ubuserror::*;
 
 #[derive(Copy, Clone)]
@@ -49,17 +50,31 @@ pub struct Connection<T: AsyncIo> {
      */
     // buffer: [u8; 64 * 1024],
     server_objs: HashMap<u32, UbusServerObject>,
+    /**
+     * (need redesign) if a UbusMsg is received from socket, the MassageManager will use the (peer, objid, seq) to identify which received to send
+     * seq
+     */
+    reply_receivers: HashMap<u16, tokio::sync::mpsc::Sender<UbusMsg>>,
+    /**
+     * should each server has its own channel?
+     */
+    invoke_receiver: tokio::sync::mpsc::Sender<UbusMsg>,
+    invoke_sender: tokio::sync::mpsc::Receiver<UbusMsg>,
 }
 
 impl<T: AsyncIo> Connection<T> {
     /// Create a new ubus connection from an existing IO
     pub async fn new(io: T) -> Result<Self, UbusError> {
+        let (invoke_receiver, invoke_sender) = mpsc::channel(8);
         let mut conn = Self {
             io,
             // peer: 0,
             sequence: 0,
             // buffer: [0u8; 64 * 1024],
             server_objs: HashMap::new(),
+            reply_receivers: HashMap::new(),
+            invoke_receiver,
+            invoke_sender,
         };
 
         // ubus server should say hello on connect
@@ -92,6 +107,8 @@ impl<T: AsyncIo> Connection<T> {
     fn generate_new_request_sequence(&mut self) -> BigEndian<u16> {
         self.sequence += 1;
         BigEndian::<u16>::from(self.sequence)
+        /* also seems okay to use random number */
+        // BigEndian::<u16>::from(random::<u16>(..))
     }
 
     // Get next message from ubus channel (blocking!)
@@ -423,8 +440,9 @@ impl<T: AsyncIo> Connection<T> {
         //     server_objs.into_iter().map(|obj| (obj.id, obj)),
         // );
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
-        'message_loop: loop {
-            let message = self.next_message().await?;
+
+        loop {
+            let message = self.invoke_sender.recv().await.ok_or(UbusError::UnexpectChannelClosed())?;
             // if message.header.sequence != header.sequence {
             //     continue;
             // }
@@ -563,6 +581,43 @@ impl<T: AsyncIo> Connection<T> {
         }
     }
 
+    pub async fn run_message_manager(&mut self) -> Result<(), UbusError> {
+        loop {
+            let message = self.next_message().await?;
+            match message {
+                UbusMsg {
+                    header:
+                        UbusMsgHeader {
+                            cmd_type: UbusCmdType::INVOKE,
+                            version: _,
+                            sequence: _,
+                            peer: _,
+                        },
+                    ubus_blobs: _,
+                } => {
+                    self.invoke_receiver
+                        .send(message)
+                        .await
+                        .expect("why the rx closed?");
+                }
+                UbusMsg {
+                    header:
+                        UbusMsgHeader {
+                            cmd_type: _,
+                            version: _,
+                            sequence: seq,
+                            peer: _,
+                        },
+                    ubus_blobs: _,
+                } => {
+                    if let Some(receiver) = self.reply_receivers.get(&seq.into()) {
+                        receiver.send(message).await.expect("why the rx closed?");
+                    }
+                }
+            }
+        }
+    }
+
     /* UNIMPLEMENTED */
     pub async fn notify(&mut self, server_obj: &UbusServerObject) {
         let new_request_sequence = self.generate_new_request_sequence();
@@ -578,6 +633,7 @@ impl<T: AsyncIo> Connection<T> {
                 UbusBlob::Status(UbusMsgStatus::OK),
             ],
         })
-        .await.expect("???");
+        .await
+        .expect("???");
     }
 }

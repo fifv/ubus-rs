@@ -27,4 +27,6 @@ pub enum UbusError {
     InvalidBlobType(UbusBlobType),
     #[error("No such path:{0}")]
     InvalidPath(String),
+    #[error("Channel closed")]
+    UnexpectChannelClosed(),
 }

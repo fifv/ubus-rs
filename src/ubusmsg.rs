@@ -1,6 +1,7 @@
 use crate::{AsyncIo, BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
+use std::borrow::ToOwned;
 use serde::{Deserialize, Serialize};
 use std::vec;
 use std::vec::Vec;
@@ -106,10 +107,26 @@ impl UbusMsg {
     }
 
     pub fn to_bytes(self) -> Vec<u8> {
-        let ubusmsg_header_buf = self.header.to_bytes();
+        self.into()
+    }
+
+    pub fn get_obj_id(&self) -> Option<u32> {
+        self.ubus_blobs.iter().find_map(|blob| {
+            if let UbusBlob::ObjId(obj_id) = blob {
+                Some(*obj_id)
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl From<UbusMsg> for Vec<u8> {
+    fn from(ubus_msg: UbusMsg) -> Self {
+        let ubusmsg_header_buf = ubus_msg.header.to_bytes();
 
         let mut ubusmsg_blobs_buffer = Vec::new();
-        for blob in self.ubus_blobs {
+        for blob in ubus_msg.ubus_blobs {
             ubusmsg_blobs_buffer.extend_from_slice(&blob.to_bytes());
         }
 

@@ -61,9 +61,10 @@ async fn main() {
         .await
         .unwrap();
 
-    connection.listening().await.unwrap();
+    let f1 = connection.listening();
+    let f2 = connection.run_message_manager();
 
-    
+    tokio::join!(f1,f2);
 
     // connection.listening(id).unwrap();
     // sleep(Duration::from_millis(1000000));

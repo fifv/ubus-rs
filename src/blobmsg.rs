@@ -201,7 +201,7 @@ impl TryFrom<BlobMsgPayload> for Value {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MsgTable(pub Vec<BlobMsg>);
 impl MsgTable {
     pub fn new() -> Self {
@@ -210,6 +210,10 @@ impl MsgTable {
     pub fn to_string(self) -> Result<String, UbusError> {
         // String::try_from(self)
         self.try_into()
+    }
+    pub fn to_string_clone(&self) -> Result<String, UbusError> {
+        // String::try_from(self)
+        self.clone().try_into()
     }
     pub fn to_string_pretty(self) -> Result<String, UbusError> {
         // String::try_from(self)
@@ -220,6 +224,12 @@ impl MsgTable {
 impl Default for MsgTable {
     fn default() -> Self {
         Self(Vec::new())
+    }
+}
+
+impl core::fmt::Debug for MsgTable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "MsgTable {}", self.to_string_clone().unwrap_or("<FAILED>".to_string()) )
     }
 }
 
@@ -314,69 +324,6 @@ impl TryFrom<MsgTable> for JsonObject {
 /* TODO: use something like Map<String, Map<String, BlobMsgType>> to describe UbusBlob::Signature */
 // pub struct MethodSignature(Vec<>)
 
-impl fmt::Display for BlobMsgPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BlobMsgPayload::Array(list) => write!(f, "{}", List(list)),
-            BlobMsgPayload::Table(dict) => write!(f, "{}", Dict(dict)),
-            BlobMsgPayload::String(s) => write!(f, "\"{}\"", s),
-            BlobMsgPayload::Int64(num) => write!(f, "{}", num),
-            BlobMsgPayload::Int32(num) => write!(f, "{}", num),
-            BlobMsgPayload::Int16(num) => write!(f, "{}", num),
-            BlobMsgPayload::Bool(num) => write!(f, "{}", num),
-            BlobMsgPayload::Double(num) => write!(f, "{}", num),
-            BlobMsgPayload::Unknown(typeid, bytes) => {
-                write!(f, "\"type={} data={:?}\"", typeid, bytes)
-            }
-        }
-    }
-}
-
-struct List<'a>(&'a Vec<BlobMsg>);
-impl<'a> fmt::Display for List<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[")?;
-        let mut first = true;
-        for msg in self.0 {
-            if !first {
-                write!(f, ", ")?;
-            } else {
-                first = false;
-            }
-            write!(f, "{}", msg.data)?;
-        }
-        write!(f, "]")?;
-        Ok(())
-    }
-}
-
-struct Dict<'a>(&'a Vec<BlobMsg>);
-impl<'a> fmt::Display for Dict<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{")?;
-        let mut first = true;
-        for msg in self.0 {
-            if first {
-                first = false;
-            } else {
-                write!(f, ", ")?;
-            }
-            write!(f, "\"{}\": {}", msg.name, msg.data)?;
-        }
-        write!(f, "}}")?;
-        Ok(())
-    }
-}
-
-impl fmt::Display for BlobMsg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.name.len() > 0 {
-            write!(f, "\"{}\": {}", self.name, self.data)
-        } else {
-            write!(f, "{}", self.data)
-        }
-    }
-}
 
 /**
  * BlobMsgBuilder is used to convert BlobMsg from "native rust struct" to "raw bytes on wire"

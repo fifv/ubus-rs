@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, path::Path, thread::sleep, time::Duration};
 
 use serde_json::json;
-use ubus::{MsgTable, UbusMethod};
+use ubus::{MsgTable, UbusMethod, UbusServerObjectBuilder};
 
 #[tokio::main]
 async fn main() {
@@ -23,51 +23,49 @@ async fn main() {
         MsgTable::try_from(r#"{"haha": true}"#).unwrap()
     }
     let some_captured_value = 1;
-    let server_obj = connection
+    let server_obj1 = connection
         .add_server(
-            obj_path,
-            HashMap::<String, UbusMethod>::from([
-                ("hi".to_string(), Box::new(handle_hi) as UbusMethod),
-                (
-                    "hii".to_string(),
+            UbusServerObjectBuilder::new(obj_path)
+                .method("hi", Box::new(handle_hi))
+                .method(
+                    "hii",
                     Box::new(|req_args: &MsgTable| {
                         MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
                     }),
-                ),
-                (
-                    "echo".to_string(),
-                    Box::new(|req_args: &MsgTable| req_args.to_owned()),
-                ),
-                (
-                    "closure".to_string(),
+                )
+                .method("echo", Box::new(|req_args: &MsgTable| req_args.to_owned()))
+                .method(
+                    "closure",
                     Box::new(move |req_args: &MsgTable| {
                         json!({"captured-value":some_captured_value})
                             .try_into()
                             .unwrap()
                     }),
                 ),
-            ]),
         )
         .await
         .unwrap();
 
-    let server_obj2 = connection
-        .add_server(
-            "t2",
-            HashMap::<String, UbusMethod>::from([(
-                "hi".to_string(),
-                Box::new(|req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap())
-                    as UbusMethod,
-            )]),
+    /*
+     *  it's okay to register multiple server objects
+     *
+     *  you can use `builder.register(&mut connection)` , this is same as `connection.add_server(builder)`
+     *
+     */
+    let _ = UbusServerObjectBuilder::new("t2")
+        .method(
+            "hi",
+            Box::new(|req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()),
         )
+        .register(&mut connection)
         .await
         .unwrap();
 
-    connection
-        .listening([server_obj, server_obj2].into())
-        .await
-        .unwrap();
+    connection.listening().await.unwrap();
+
+    
+
     // connection.listening(id).unwrap();
-    sleep(Duration::from_millis(1000000));
+    // sleep(Duration::from_millis(1000000));
     // println!("{:?}", obj);
 }

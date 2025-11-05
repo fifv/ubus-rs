@@ -23,6 +23,31 @@ pub struct UbusServerObject {
     pub methods: HashMap<String, UbusMethod>,
 }
 
+#[derive(Default)]
+pub struct UbusServerObjectBuilder {
+    pub path: String,
+    /**
+     * used on server side object, the actually callbacks
+     */
+    pub methods: HashMap<String, UbusMethod>,
+}
+
+impl UbusServerObjectBuilder {
+    pub fn new(obj_path: &str) -> Self {
+        Self {
+            path: obj_path.into(),
+            ..Default::default()
+        }
+    }
+    pub fn method(mut self, name: &str, callback: UbusMethod) -> Self {
+        self.methods.insert(name.into(), callback);
+        self
+    }
+    pub async fn register<T: AsyncIo>(self, conn: &mut Connection<T>) -> Result<&UbusServerObject, UbusError> {
+        conn.add_server(self).await
+    }
+}
+
 impl std::fmt::Debug for UbusServerObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UbusObject")

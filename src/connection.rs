@@ -1,7 +1,7 @@
 use crate::*;
 
-use core::ops::Not;
-use std::{collections::HashMap, dbg, string::ToString, vec::Vec};
+use core::{default, ops::Not};
+use std::{collections::HashMap, dbg, println, string::ToString, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
 use std::vec;
@@ -26,7 +26,7 @@ pub struct SignatureResult<'a> {
     pub args: HashMap<String, BlobMsgType>,
 }
 
-#[derive(Clone, Copy)]
+#[derive()]
 pub struct Connection<T: AsyncIo> {
     io: T,
     /*
@@ -48,6 +48,7 @@ pub struct Connection<T: AsyncIo> {
      * not used, we use a heap allocated Vec to store received data
      */
     // buffer: [u8; 64 * 1024],
+    server_objs: HashMap<u32, UbusServerObject>,
 }
 
 impl<T: AsyncIo> Connection<T> {
@@ -58,6 +59,7 @@ impl<T: AsyncIo> Connection<T> {
             // peer: 0,
             sequence: 0,
             // buffer: [0u8; 64 * 1024],
+            server_objs: HashMap::new(),
         };
 
         // ubus server should say hello on connect
@@ -97,7 +99,7 @@ impl<T: AsyncIo> Connection<T> {
         UbusMsg::from_io(&mut self.io).await
     }
 
-    pub async fn send(&mut self, message: UbusMsg) -> Result<(), UbusError> {
+    pub async fn send_message(&mut self, message: UbusMsg) -> Result<(), UbusError> {
         // self.io.put(&Into::<Vec<u8>>::into(message))
         self.io.put(&message.to_bytes()).await
     }
@@ -110,7 +112,8 @@ impl<T: AsyncIo> Connection<T> {
     ) -> Result<MsgTable, UbusError> {
         let request_sequence = self.generate_new_request_sequence();
 
-        self.send(UbusMsg {
+        // let now = std::time::Instant::now();
+        self.send_message(UbusMsg {
             header: UbusMsgHeader {
                 version: UbusMsgVersion::CURRENT,
                 cmd_type: UbusCmdType::INVOKE,
@@ -124,9 +127,9 @@ impl<T: AsyncIo> Connection<T> {
             ],
         })
         .await?;
+        // println!("Elapsed: {:.2?}", now.elapsed());
 
-        // FIXME: use Option<>
-        let mut reply_args = MsgTable::new();
+        let mut reply_args = None;
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'messages: loop {
             let message = self.next_message().await?;
@@ -141,7 +144,13 @@ impl<T: AsyncIo> Connection<T> {
                     for blob in message.ubus_blobs {
                         match blob {
                             UbusBlob::Status(UbusMsgStatus::OK) => {
-                                break 'messages Ok(reply_args);
+                                if let Some(reply_args) = reply_args {
+                                    break 'messages Ok(reply_args);
+                                } else {
+                                    break 'messages Err(UbusError::InvalidData(
+                                        "response is empty",
+                                    ));
+                                }
                             }
                             UbusBlob::Status(status) => {
                                 return Err(UbusError::Status(status));
@@ -155,7 +164,7 @@ impl<T: AsyncIo> Connection<T> {
                     for blob in message.ubus_blobs {
                         // dbg!(&blob);
                         if let UbusBlob::Data(data) = blob {
-                            reply_args = data;
+                            reply_args = Some(data);
                             // dbg!(&reply_args);
                             continue 'messages;
                         }
@@ -225,7 +234,7 @@ impl<T: AsyncIo> Connection<T> {
     pub async fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
         let request_sequence = self.generate_new_request_sequence();
 
-        self.send(UbusMsg {
+        self.send_message(UbusMsg {
             header: UbusMsgHeader {
                 version: UbusMsgVersion::CURRENT,
                 cmd_type: UbusCmdType::LOOKUP,
@@ -293,22 +302,43 @@ impl<T: AsyncIo> Connection<T> {
         objs
     }
 
-    /**
+    /*
      * send:        add_object: {"objpath":"test","signature":{"hello":{"id":5,"msg":3},"watch":{"id":5,"counter":5},"count":{"to":5,"string":3}}}
      * return:      data:       {"objid":2013531835,"objtype":-1292016789}
      */
+
+
+    /**
+    Regsister a server object with obj_path, method_name and method_callbacks
+      use a `UbusServerObjectBuilder` to build them
+
+      the callback is wrapped in Box to support closure capture
+
+    TODO: currently a `listening()` call is need to listen future requests, maybe I should find a better way
+
+
+      ### Example
+      ```
+      let _ = connection
+        .add_server(UbusServerObjectBuilder::new("t2").method(
+            "hi",
+            Box::new(|req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()),
+        ))
+        .await
+        .unwrap();
+      ```
+    */
     pub async fn add_server(
         &mut self,
-        obj_path: &str,
-        methods: HashMap<String, UbusMethod>,
-    ) -> Result<UbusServerObject, UbusError> {
-        let mut server_obj = UbusServerObject::default();
-        server_obj.methods = methods;
+        server_obj_builder: UbusServerObjectBuilder,
+    ) -> Result<&UbusServerObject, UbusError> {
+        let mut new_server_obj: UbusServerObject = UbusServerObject::default();
+        // server_obj.methods = methods;
 
         // FIXME\: official ubus cli call stuck while data in monitor looks good <- fixed: replied seq should be same as requested
         {
             let request_sequence = self.generate_new_request_sequence();
-            self.send(UbusMsg {
+            self.send_message(UbusMsg {
                 header: UbusMsgHeader {
                     version: UbusMsgVersion::CURRENT,
                     cmd_type: UbusCmdType::ADD_OBJECT,
@@ -316,12 +346,12 @@ impl<T: AsyncIo> Connection<T> {
                     peer: 0.into(),
                 },
                 ubus_blobs: vec![
-                    UbusBlob::ObjPath(obj_path.to_string()),
+                    UbusBlob::ObjPath(server_obj_builder.path),
                     UbusBlob::Signature(
-                        server_obj
+                        server_obj_builder
                             .methods
                             .iter()
-                            .map(|(method, cb)| BlobMsg {
+                            .map(|(method, _)| BlobMsg {
                                 name: method.to_string(),
                                 data: BlobMsgPayload::Table(Vec::new()),
                             })
@@ -359,8 +389,8 @@ impl<T: AsyncIo> Connection<T> {
                         for blob in message.ubus_blobs {
                             // dbg!(&blob);
                             match blob {
-                                UbusBlob::ObjId(id) => server_obj.id = id,
-                                UbusBlob::ObjType(objtype) => server_obj.objtype = objtype,
+                                UbusBlob::ObjId(id) => new_server_obj.id = id,
+                                UbusBlob::ObjType(objtype) => new_server_obj.objtype = objtype,
                                 _ => todo!(),
                             }
                         }
@@ -371,7 +401,11 @@ impl<T: AsyncIo> Connection<T> {
                 }
             };
         };
-        Ok(server_obj)
+
+        new_server_obj.methods = server_obj_builder.methods;
+        let new_server_obj_id = new_server_obj.id;
+        self.server_objs.insert(new_server_obj_id, new_server_obj);
+        Ok(&self.server_objs.get(&new_server_obj_id).unwrap())
     }
 
     /*
@@ -379,12 +413,15 @@ impl<T: AsyncIo> Connection<T> {
      * receive: invoke: {"objid":2013531835,"method":"hello","data":{"msg":"fsdfsdf"},"user":"fifv","group":"fifv"}
      * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
      * reply:   status: {"status":0,"objid":2013531835}
+     *
+     * FIXME: the read loop conflict with client read response after invoke
+     *
      */
-    pub async fn listening(&mut self, server_objs: Vec<UbusServerObject>) -> Result<(), UbusError> {
+    pub async fn listening(&mut self) -> Result<(), UbusError> {
         /* FIXME: it may be not ideal to abuse ? to throw error, each error should be handled correctly */
-        let server_objs_map = HashMap::<u32, UbusServerObject>::from_iter(
-            server_objs.into_iter().map(|obj| (obj.id, obj)),
-        );
+        // let server_objs_map = HashMap::<u32, UbusServerObject>::from_iter(
+        //     server_objs.into_iter().map(|obj| (obj.id, obj)),
+        // );
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'message_loop: loop {
             let message = self.next_message().await?;
@@ -446,13 +483,13 @@ impl<T: AsyncIo> Connection<T> {
 
                         /* reply to client */
 
-                        if let Some(server_obj) = server_objs_map.get(&requested_server_obj_id) {
+                        if let Some(server_obj) = self.server_objs.get(&requested_server_obj_id) {
                             match server_obj.methods.get(&method_name) {
                                 Some(method) => {
                                     tokio::spawn(async {});
                                     let reply_args = method(&req_args);
                                     /* here client_obj_id == server objid */
-                                    self.send(UbusMsg{
+                                    self.send_message(UbusMsg{
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::DATA,
@@ -465,7 +502,11 @@ impl<T: AsyncIo> Connection<T> {
                                         ],
                                     }).await?;
 
-                                    self.send(UbusMsg {
+                                    // dbg!(reply_args);
+
+                                    // sleep(Duration::from_millis(400));
+
+                                    self.send_message(UbusMsg {
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::STATUS,
@@ -481,7 +522,7 @@ impl<T: AsyncIo> Connection<T> {
                                 }
                                 None => {
                                     /* method not found */
-                                    self.send(UbusMsg {
+                                    self.send_message(UbusMsg {
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::STATUS,
@@ -498,7 +539,7 @@ impl<T: AsyncIo> Connection<T> {
                             }
                         } else {
                             /* server obj not found */
-                            self.send(UbusMsg {
+                            self.send_message(UbusMsg {
                                 header: UbusMsgHeader {
                                     version: UbusMsgVersion::CURRENT,
                                     cmd_type: UbusCmdType::STATUS,
@@ -520,5 +561,23 @@ impl<T: AsyncIo> Connection<T> {
                 }
             }
         }
+    }
+
+    /* UNIMPLEMENTED */
+    pub async fn notify(&mut self, server_obj: &UbusServerObject) {
+        let new_request_sequence = self.generate_new_request_sequence();
+        self.send_message(UbusMsg {
+            header: UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::NOTIFY,
+                sequence: new_request_sequence,
+                peer: server_obj.id.into(),
+            },
+            ubus_blobs: vec![
+                UbusBlob::ObjId(server_obj.id),
+                UbusBlob::Status(UbusMsgStatus::OK),
+            ],
+        })
+        .await.expect("???");
     }
 }

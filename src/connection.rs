@@ -381,6 +381,7 @@ impl<T: AsyncIo> Connection<T> {
      * reply:   status: {"status":0,"objid":2013531835}
      */
     pub async fn listening(&mut self, server_objs: Vec<UbusServerObject>) -> Result<(), UbusError> {
+        /* FIXME: it may be not ideal to abuse ? to throw error, each error should be handled correctly */
         let server_objs_map = HashMap::<u32, UbusServerObject>::from_iter(
             server_objs.into_iter().map(|obj| (obj.id, obj)),
         );
@@ -448,6 +449,7 @@ impl<T: AsyncIo> Connection<T> {
                         if let Some(server_obj) = server_objs_map.get(&requested_server_obj_id) {
                             match server_obj.methods.get(&method_name) {
                                 Some(method) => {
+                                    tokio::spawn(async {});
                                     let reply_args = method(&req_args);
                                     /* here client_obj_id == server objid */
                                     self.send(UbusMsg{
@@ -459,16 +461,9 @@ impl<T: AsyncIo> Connection<T> {
                                         },
                                         ubus_blobs: vec![
                                             UbusBlob::ObjId(requested_server_obj_id),
-                                            // UbusBlob::Data(MsgTable::try_from(json!({
-                                            //     "wtf": 1
-                                            // }))?),
                                             UbusBlob::Data(reply_args),/* data is moved to enum, then moved to UbusMsg */
                                         ],
                                     }).await?;
-
-                                    // dbg!(reply_args);
-
-                                    // sleep(Duration::from_millis(400));
 
                                     self.send(UbusMsg {
                                         header: UbusMsgHeader {

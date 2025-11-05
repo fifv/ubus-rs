@@ -1,4 +1,4 @@
-use std::println;
+use std::{println, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -9,7 +9,7 @@ use ubus::*;
 async fn test() {
     let (client, mut server) = UnixStream::pair().unwrap();
 
-    tokio::spawn(async move {
+    let j = tokio::spawn(async move {
         server.write_all(TEST_HELLO).await.unwrap();
         let mut command = [0u8; 12];
         server.read_exact(&mut command).await.unwrap();
@@ -18,6 +18,8 @@ async fn test() {
         //     server.write_all(i).unwrap();
         // }
     });
+
+    // tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let mut connection = Connection::new(client).await.unwrap();
 
@@ -34,6 +36,9 @@ async fn test() {
         )
         .await
         .unwrap();
+
+    let _ = tokio::join!(j);
+
     println!("\n{:?}", obj);
 }
 

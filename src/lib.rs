@@ -145,7 +145,7 @@ impl<T> From<core::convert::Infallible> for Error<T> {
 
 pub trait IOError {}
 
-pub trait AsyncIo {
+pub trait AsyncIo: Send + 'static {
     type Error: IOError;
     async fn put(&mut self, data: &[u8]) -> Result<(), UbusError>;
     async fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;

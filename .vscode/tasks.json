@@ -22,21 +22,6 @@
             }
         },
         {
-            "label": "scp to sdk",
-            "type": "shell",
-            "command": "scp",
-            "args": [
-                "target/armv7-unknown-linux-musleabihf/release/pm",
-                "Ubuntu18:/home/fifv/v853/v853-sdk-test/target/allwinner/v853-vision/busybox-init-base-files/usr/bin",
-            ],
-            "dependsOn":["cargo build examples"],
-            "problemMatcher": [ ],
-            "group": {
-                "kind": "build",
-                "isDefault": false
-            }
-        },
-        {
             "label": "cp to sdk",
             "type": "shell",
             "command": "cp",

@@ -145,10 +145,20 @@ impl<T> From<core::convert::Infallible> for Error<T> {
 
 pub trait IOError {}
 
-pub trait AsyncIo: Send + 'static {
+pub trait AsyncIoReader: Send + 'static {
     type Error: IOError;
-    async fn put(&mut self, data: &[u8]) -> Result<(), UbusError>;
-    async fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError>;
+    fn get(
+        &mut self,
+        data: &mut [u8],
+    ) -> impl std::future::Future<Output = Result<(), UbusError>> + Send;
+}
+
+pub trait AsyncIoWriter: Send + 'static {
+    type Error: IOError;
+    fn put(
+        &mut self,
+        data: &[u8],
+    ) -> impl std::future::Future<Output = Result<(), UbusError>> + Send;
 }
 
 mod blob;

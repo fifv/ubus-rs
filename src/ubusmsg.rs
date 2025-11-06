@@ -1,4 +1,4 @@
-use crate::{AsyncIo, BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError};
+use crate::{AsyncIoReader, BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
 use std::borrow::ToOwned;
@@ -72,7 +72,7 @@ pub struct UbusMsg {
 }
 
 impl UbusMsg {
-    pub async fn from_io<T: AsyncIo>(io: &mut T) -> Result<Self, UbusError> {
+    pub async fn from_io<T: AsyncIoReader>(io: &mut T) -> Result<Self, UbusError> {
         /* read ubus message header */
         let mut ubusmsg_header_buffer = [0u8; UbusMsgHeader::SIZE];
         io.get(&mut ubusmsg_header_buffer).await?;

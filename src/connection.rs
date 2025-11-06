@@ -2,7 +2,7 @@ use crate::*;
 
 use core::{default, ops::Not};
 use std::{
-    collections::HashMap, dbg, println, random::random, string::ToString, sync::Arc, vec::Vec,
+    collections::HashMap, dbg, println, string::ToString, sync::Arc, vec::Vec,
 };
 extern crate alloc;
 use alloc::string::String;
@@ -61,7 +61,7 @@ pub struct Connection {
      * should each server has its own channel?
      */
     invoke_receiver_tx: mpsc::Sender<UbusMsg>,
-    invoke_receiver_rx: mpsc::Receiver<UbusMsg>,
+    // invoke_receiver_rx: mpsc::Receiver<UbusMsg>,
     /**
      * send message to MessageManager and let it send to wire
      */
@@ -69,19 +69,37 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Create a new ubus connection from an existing IO
-    pub async fn new<T: AsyncIo>(&self, mut io: T) -> Result<Self, UbusError> {
+    /**
+     * Create a new ubus connection from an existing IO
+     * 
+     */
+    pub async fn new<R: AsyncIoReader, W: AsyncIoWriter>(
+        (mut io_reader, mut io_writer): (R, W),
+    ) -> Result<Self, UbusError> {
         let (invoke_receiver_tx, invoke_receiver_rx) = mpsc::channel(8);
         let (message_sender_tx, mut message_sender_rx) = mpsc::channel(8);
 
-        let reply_receivers_tx = self.reply_receivers_tx.clone();
-        let invoke_receiver_tx1 = invoke_receiver_tx.clone();
+        let conn = Self {
+            // peer: 0,
+            sequence: 0,
+            // buffer: [0u8; 64 * 1024],
+            server_objs: HashMap::new(),
+            reply_receivers_tx: Arc::new(Mutex::new(HashMap::new())),
+            invoke_receiver_tx: invoke_receiver_tx.clone(),
+            message_sender_tx: message_sender_tx.clone(),
+        };
+
+
+        tokio::spawn(conn.listening(invoke_receiver_rx, message_sender_tx));
+
+        let reply_receivers_tx = conn.reply_receivers_tx.clone();
+        let invoke_receiver_tx1 = invoke_receiver_tx;
         /* message manager */
         tokio::spawn(async move {
             /* move io here */
             loop {
                 tokio::select! {
-                    Ok(message) = UbusMsg::from_io(&mut io) => {
+                    Ok(message) = UbusMsg::from_io(&mut io_reader) => {
                         match message {
                             UbusMsg {
                                 header:
@@ -130,22 +148,13 @@ impl Connection {
                         }
 
                     },
-                    message = message_sender_rx.recv() => {
-
+                    Some(message) = message_sender_rx.recv() => {
+                        io_writer.put(&message.to_bytes()).await.expect("why send failed")
                     },
                 }
-            };
+            }
         });
-        let conn = Self {
-            // peer: 0,
-            sequence: 0,
-            // buffer: [0u8; 64 * 1024],
-            server_objs: HashMap::new(),
-            reply_receivers_tx: Arc::new(Mutex::new(HashMap::new())),
-            invoke_receiver_tx: invoke_receiver_tx,
-            invoke_receiver_rx,
-            message_sender_tx: message_sender_tx,
-        };
+
 
         // ubus server should say hello on connect
         // let message = conn.next_message().await?;
@@ -183,13 +192,18 @@ impl Connection {
 
     // Get next message from ubus channel (blocking!)
     // pub async fn next_message(&mut self) -> Result<UbusMsg, UbusError> {
-    //     UbusMsg::from_io(&mut self.io).await
+    //     // UbusMsg::from_io(&mut self.io).await
+    //     // self.
     // }
 
-    // pub async fn send_message(&mut self, message: UbusMsg) -> Result<(), UbusError> {
-    //     // self.io.put(&Into::<Vec<u8>>::into(message))
-    //     self.io.put(&message.to_bytes()).await
-    // }
+    pub async fn send_message(&self, message: UbusMsg) -> Result<(), UbusError> {
+        // self.io.put(&Into::<Vec<u8>>::into(message))
+        // self.io.put(&message.to_bytes()).await
+        self.message_sender_tx
+            .send(message)
+            .await
+            .map_err(|_| UbusError::UnexpectChannelClosed())
+    }
 
     pub async fn invoke(
         &mut self,
@@ -198,6 +212,11 @@ impl Connection {
         req_args: MsgTable,
     ) -> Result<MsgTable, UbusError> {
         let request_sequence = self.generate_new_request_sequence();
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+        self.reply_receivers_tx
+            .lock()
+            .await
+            .insert(request_sequence.into(), reply_receiver_tx);
 
         // let now = std::time::Instant::now();
         self.send_message(UbusMsg {
@@ -219,7 +238,8 @@ impl Connection {
         let mut reply_args = None;
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
         'messages: loop {
-            let message = self.next_message().await?;
+            // let message = self.next_message().await?;
+            let message = reply_receiver_rx.recv().await.unwrap();
             if message.header.sequence != request_sequence {
                 // FIXME:
                 // continue;
@@ -321,6 +341,12 @@ impl Connection {
     pub async fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
         let request_sequence = self.generate_new_request_sequence();
 
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+        self.reply_receivers_tx
+            .lock()
+            .await
+            .insert(request_sequence.into(), reply_receiver_tx);
+
         self.send_message(UbusMsg {
             header: UbusMsgHeader {
                 version: UbusMsgVersion::CURRENT,
@@ -341,7 +367,9 @@ impl Connection {
             let mut objs = Vec::new();
             /* TODO: optimize logic, too much mut, too much duplicate! */
             'message_iter: loop {
-                let message = self.next_message().await?;
+                // let message = self.next_message().await?;
+                let message = reply_receiver_rx.recv().await.unwrap();
+
                 dbg!(&message);
                 // println!("{:#?}", &message);
                 if message.header.sequence != request_sequence {
@@ -425,6 +453,13 @@ impl Connection {
         // FIXME\: official ubus cli call stuck while data in monitor looks good <- fixed: replied seq should be same as requested
         {
             let request_sequence = self.generate_new_request_sequence();
+
+            let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+            self.reply_receivers_tx
+                .lock()
+                .await
+                .insert(request_sequence.into(), reply_receiver_tx);
+
             self.send_message(UbusMsg {
                 header: UbusMsgHeader {
                     version: UbusMsgVersion::CURRENT,
@@ -451,7 +486,7 @@ impl Connection {
 
             /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
             let reply_args = 'message_loop: loop {
-                let message = self.next_message().await?;
+                let message = reply_receiver_rx.recv().await.unwrap();
                 if message.header.sequence != request_sequence {
                     continue;
                 }
@@ -506,8 +541,8 @@ impl Connection {
      */
     pub async fn listening(
         &self,
-        mut invoke_sender: mpsc::Receiver<UbusMsg>,
-        message_sender_tx: tokio::sync::mpsc::Sender<UbusMsg>,
+        mut invoke_receiver_rx: mpsc::Receiver<UbusMsg>,
+        message_sender_tx: mpsc::Sender<UbusMsg>,
     ) -> Result<(), UbusError> {
         /* FIXME: it may be not ideal to abuse ? to throw error, each error should be handled correctly */
         // let server_objs_map = HashMap::<u32, UbusServerObject>::from_iter(
@@ -516,7 +551,7 @@ impl Connection {
         /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
 
         loop {
-            let message = invoke_sender
+            let message = invoke_receiver_rx
                 .recv()
                 .await
                 .ok_or(UbusError::UnexpectChannelClosed())?;

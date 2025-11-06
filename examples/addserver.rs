@@ -61,7 +61,7 @@ async fn main() {
         .await
         .unwrap();
 
-    let f1 = connection.listening();
+    let f1 = connection.listening(connection.);
     let f2 = connection.run_message_manager();
 
     tokio::join!(f1,f2);

@@ -1,6 +1,6 @@
 use std::string::{String, ToString};
-use std::vec::Vec;
 use std::vec;
+use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

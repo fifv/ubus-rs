@@ -1,4 +1,4 @@
-use crate::{BlobMsg, MsgTable, UbusBlob, UbusError};
+use crate::{BlobMsg, HexU32, MsgTable, UbusBlob, UbusError, UbusMsgStatus};
 
 use core::convert::{TryFrom, TryInto};
 use core::mem::{align_of, size_of, transmute};
@@ -312,12 +312,12 @@ impl<'a> From<&'a [u8]> for BlobPayloadParser<'a> {
 macro_rules! payload_try_into_number {
     ( $( $ty:ty , )* ) => { $( payload_try_into_number!($ty); )* };
     ( $ty:ty ) => {
-        impl<'a> TryInto<$ty> for BlobPayloadParser<'a>{
+        impl<'a> TryFrom<BlobPayloadParser<'a>> for $ty {
             type Error = UbusError;
-            fn try_into(self) -> Result<$ty, Self::Error> {
-                let size = size_of::<$ty>();
-                if let Ok(bytes) = self.0[..size].try_into() {
-                    Ok(<$ty>::from_be_bytes(bytes))
+            fn try_from(val: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
+                let size = size_of::<Self>();
+                if let Ok(bytes) = val.0[..size].try_into() {
+                    Ok(<Self>::from_be_bytes(bytes))
                 } else {
                     Err(UbusError::InvalidData(stringify!("Blob wrong size for " $ty)))
                 }
@@ -327,21 +327,28 @@ macro_rules! payload_try_into_number {
 }
 payload_try_into_number!(u8, i8, u16, i16, u32, i32, u64, i64, f64,);
 
-impl<'a> TryInto<bool> for BlobPayloadParser<'a> {
+impl<'a> TryFrom<BlobPayloadParser<'a>> for HexU32 {
     type Error = UbusError;
-    fn try_into(self) -> Result<bool, Self::Error> {
-        let value: u8 = self.0[0];
+    fn try_from(value: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
+        Ok(Self(u32::try_from(value)?))
+    }
+}
+
+impl<'a> TryFrom<BlobPayloadParser<'a>> for bool {
+    type Error = UbusError;
+    fn try_from(parser: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
+        let value: u8 = parser.0[0];
         Ok(value != 0)
     }
 }
 
-impl<'a> TryInto<String> for BlobPayloadParser<'a> {
+impl<'a> TryFrom<BlobPayloadParser<'a>> for String {
     type Error = UbusError;
-    fn try_into(self) -> Result<String, UbusError> {
-        let data = if self.0.last() == Some(&b'\0') {
-            self.0[..self.0.len() - 1].to_vec()
+    fn try_from(parser: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
+        let data = if parser.0.last() == Some(&b'\0') {
+            parser.0[..parser.0.len() - 1].to_vec()
         } else {
-            self.into()
+            parser.into()
         };
         String::from_utf8(data.to_vec()).map_err(UbusError::from)
     }
@@ -351,42 +358,39 @@ impl<'a> TryInto<String> for BlobPayloadParser<'a> {
  * parse raw bytes into Vec<BlobMsg>
  * main magic happens in BlobIter::next() -> BlobMsg::from_bytes()
  */
-impl<'a> TryInto<MsgTable> for BlobPayloadParser<'a> {
+impl<'a> TryFrom<BlobPayloadParser<'a>> for MsgTable {
     type Error = UbusError;
-    fn try_into(self) -> Result<MsgTable, UbusError> {
-        Ok(BlobIter::new(self.into())
-            .map(|blob| blob.try_into())
-            .try_collect::<Vec<BlobMsg>>()?
-            .into())
+    fn try_from(parser: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
+        Ok(Vec::<BlobMsg>::try_from(parser)?.into())
     }
 }
-impl<'a> TryInto<Vec<BlobMsg>> for BlobPayloadParser<'a> {
+impl<'a> TryFrom<BlobPayloadParser<'a>> for Vec<BlobMsg> {
     type Error = UbusError;
-    fn try_into(self) -> Result<Vec<BlobMsg>, UbusError> {
-        Ok(BlobIter::new(self.into())
+    fn try_from(parser: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
+        Ok(BlobIter::new(parser.into())
             .map(|blob| blob.try_into())
             .try_collect::<Vec<BlobMsg>>()?)
     }
 }
 
-impl<'a> Into<Vec<u8>> for BlobPayloadParser<'a> {
-    fn into(self) -> Vec<u8> {
-        self.0.to_owned()
+impl<'a> From<BlobPayloadParser<'a>> for Vec<u8> {
+    fn from(parser: BlobPayloadParser<'a>) -> Self {
+        parser.0.to_owned()
     }
 }
 
-impl<'a> Into<&'a [u8]> for BlobPayloadParser<'a> {
-    fn into(self) -> &'a [u8] {
-        self.0
+impl<'a> From<BlobPayloadParser<'a>> for &'a [u8] {
+    fn from(parser: BlobPayloadParser<'a>) -> Self {
+        parser.0
     }
 }
 
-impl<'a> TryInto<crate::UbusMsgStatus> for BlobPayloadParser<'a> {
+impl<'a> TryFrom<BlobPayloadParser<'a>> for UbusMsgStatus {
     type Error = UbusError;
-    fn try_into(self) -> Result<crate::UbusMsgStatus, Self::Error> {
+    fn try_from(parser: BlobPayloadParser<'a>) -> Result<Self, Self::Error> {
         let size = size_of::<i32>();
-        if let Ok(bytes) = self.0[..size].try_into() {
-            Ok(crate::UbusMsgStatus(i32::from_be_bytes(bytes)))
+        if let Ok(bytes) = parser.0[..size].try_into() {
+            Ok(UbusMsgStatus(u32::from_be_bytes(bytes)))
         } else {
             Err(UbusError::InvalidData(stringify!("Blob wrong size for")))
         }

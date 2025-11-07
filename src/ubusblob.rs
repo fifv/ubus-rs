@@ -1,4 +1,5 @@
 use crate::{Blob, BlobBuilder, BlobPayloadParser, BlobTag, MsgTable, UbusError, UbusMsgStatus};
+use core::fmt::{LowerHex, UpperHex};
 use serde::{Deserialize, Serialize};
 use std::{borrow::ToOwned, string::String, vec::Vec};
 
@@ -19,23 +20,73 @@ values!(pub UbusBlobType(u32) {
     GROUP       = 0x0d,
 });
 
+#[derive(Copy, Clone, Default)]
+pub struct HexU32(pub u32);
+impl core::fmt::Debug for HexU32 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+impl From<u32> for HexU32 {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+impl From<HexU32> for u32 {
+    fn from(value: HexU32) -> Self {
+        value.0
+    }
+}
+impl LowerHex for HexU32 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+impl UpperHex for HexU32 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:X}", self.0)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum UbusBlob {
     Unspec(Vec<u8>),
     Status(UbusMsgStatus),
     ObjPath(String),
-    ObjId(u32),
+    ObjId(HexU32),
     Method(String),
-    ObjType(u32),
+    ObjType(HexU32),
     Signature(MsgTable),
     Data(MsgTable),
-    Target(u32),
+    Target(HexU32),
     Active(bool),
     NoReply(bool),
-    Subscribers(u32),
+    Subscribers(MsgTable),
     User(String),
     Group(String),
 }
+
+// impl core::fmt::Debug for UbusBlob {
+//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+//         match self {
+//             Self::ObjId(id) => f.debug_tuple("ObjId").field(&format_args!("{:#x}", id)).finish(),
+//             Self::ObjType(t) => f.debug_tuple("ObjType").field(&format_args!("{:#x}", t)).finish(),
+//             Self::Target(t) => f.debug_tuple("Target").field(&format_args!("{:#x}", t)).finish(),
+
+//             Self::Unspec(v) => f.debug_tuple("Unspec").field(v).finish(),
+//             Self::Status(s) => f.debug_tuple("Status").field(s).finish(),
+//             Self::ObjPath(s) => f.debug_tuple("ObjPath").field(s).finish(),
+//             Self::Method(s) => f.debug_tuple("Method").field(s).finish(),
+//             Self::Signature(t) => f.debug_tuple("Signature").field(t).finish(),
+//             Self::Data(t) => f.debug_tuple("Data").field(t).finish(),
+//             Self::Active(b) => f.debug_tuple("Active").field(b).finish(),
+//             Self::NoReply(b) => f.debug_tuple("NoReply").field(b).finish(),
+//             Self::Subscribers(t) => f.debug_tuple("Subscribers").field(t).finish(),
+//             Self::User(s) => f.debug_tuple("User").field(s).finish(),
+//             Self::Group(s) => f.debug_tuple("Group").field(s).finish(),
+//         }
+//     }
+// }
 
 impl TryFrom<Blob> for UbusBlob {
     type Error = UbusError;
@@ -72,6 +123,9 @@ impl UbusBlob {
         let data = &data[..tag.inner_len()];
         let parser = BlobPayloadParser::from(data);
 
+        let _len = tag.inner_len();
+        let _type = tag.blob_type();
+
         match UbusBlobType(tag.blob_type()) {
             UbusBlobType::UNSPEC => Ok(UbusBlob::Unspec(parser.into())),
             UbusBlobType::STATUS => Ok(UbusBlob::Status(parser.try_into()?)),
@@ -102,21 +156,23 @@ impl UbusBlob {
             UbusBlob::Unspec(v) => BlobBuilder::from_bytes(UbusBlobType::UNSPEC.value(), v)
                 .unwrap()
                 .into(),
-            UbusBlob::Status(v) => BlobBuilder::from_u32(UbusBlobType::STATUS.value(), v.0 as u32)
+            UbusBlob::Status(v) => BlobBuilder::from_u32(UbusBlobType::STATUS.value(), v.0)
                 .unwrap()
                 .into(),
             UbusBlob::ObjPath(v) => BlobBuilder::from_str(UbusBlobType::OBJPATH.value(), v)
                 .unwrap()
                 .into(),
-            UbusBlob::ObjId(v) => BlobBuilder::from_u32(UbusBlobType::OBJID.value(), *v as u32)
+            UbusBlob::ObjId(v) => BlobBuilder::from_u32(UbusBlobType::OBJID.value(), (*v).into())
                 .unwrap()
                 .into(),
             UbusBlob::Method(v) => BlobBuilder::from_str(UbusBlobType::METHOD.value(), v)
                 .unwrap()
                 .into(),
-            UbusBlob::ObjType(v) => BlobBuilder::from_u32(UbusBlobType::OBJTYPE.value(), *v as u32)
-                .unwrap()
-                .into(),
+            UbusBlob::ObjType(v) => {
+                BlobBuilder::from_u32(UbusBlobType::OBJTYPE.value(), (*v).into())
+                    .unwrap()
+                    .into()
+            }
             UbusBlob::Signature(v) => {
                 /*  */
                 BlobBuilder::from_bytes(
@@ -132,7 +188,7 @@ impl UbusBlob {
             )
             .unwrap()
             .into(),
-            UbusBlob::Target(v) => BlobBuilder::from_u32(UbusBlobType::TARGET.value(), *v as u32)
+            UbusBlob::Target(v) => BlobBuilder::from_u32(UbusBlobType::TARGET.value(), (*v).into())
                 .unwrap()
                 .into(),
             UbusBlob::Active(v) => BlobBuilder::from_bool(UbusBlobType::ACTIVE.value(), *v)
@@ -141,11 +197,12 @@ impl UbusBlob {
             UbusBlob::NoReply(v) => BlobBuilder::from_bool(UbusBlobType::NO_REPLY.value(), *v)
                 .unwrap()
                 .into(),
-            UbusBlob::Subscribers(v) => {
-                BlobBuilder::from_u32(UbusBlobType::SUBSCRIBERS.value(), *v as u32)
-                    .unwrap()
-                    .into()
-            }
+            UbusBlob::Subscribers(v) => BlobBuilder::from_bytes(
+                UbusBlobType::SUBSCRIBERS.value(),
+                <Vec<u8>>::try_from(v.to_owned()).unwrap().iter(),
+            )
+            .unwrap()
+            .into(),
             UbusBlob::User(v) => BlobBuilder::from_str(UbusBlobType::USER.value(), v)
                 .unwrap()
                 .into(),

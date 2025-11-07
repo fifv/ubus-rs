@@ -16,6 +16,8 @@ default = []
 no_std  = []
 
 [dependencies]
+env_logger = "0.11.8"
+log = "0.4.28"
 serde          = { version = "1.0.193", default-features = false, features = ["derive"] }
 serde_json     = "1.0.108"
 storage_endian = { git = "https://github.com/jbit/storage_endian.git", version = "0.1.0" }

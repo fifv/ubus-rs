@@ -15,8 +15,8 @@ pub type UbusMethod = Box<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
 #[derive(Default)]
 pub struct UbusServerObject {
     pub path: String,
-    pub id: u32,
-    pub objtype: u32,
+    pub id: HexU32,
+    pub objtype: HexU32,
     /**
      * used on server side object, the actually callbacks
      */
@@ -43,7 +43,7 @@ impl UbusServerObjectBuilder {
         self.methods.insert(name.into(), callback);
         self
     }
-    pub async fn register(self, conn: &mut Connection) -> Result<(), UbusError> {
+    pub async fn register(self, conn: &mut Connection) -> Result<u32, UbusError> {
         conn.add_server(self).await
     }
 }
@@ -65,8 +65,8 @@ impl std::fmt::Debug for UbusServerObject {
 #[derive(Default, Debug, Clone)]
 pub struct UbusObject {
     pub path: String,
-    pub id: u32,
-    pub objtype: u32,
+    pub id: HexU32,
+    pub objtype: HexU32,
     /**
      * used on client side lookup, store what the server says
      */

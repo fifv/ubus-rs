@@ -1,9 +1,10 @@
 use crate::*;
 
-use core::ops::Not;
-use std::{collections::HashMap, dbg, println, string::ToString, sync::Arc, vec::Vec};
+use core::{f32::consts::E, ops::Not};
+use std::{collections::HashMap, dbg, format, println, string::ToString, sync::Arc, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
+use serde_json::json;
 use std::vec;
 use storage_endian::BigEndian;
 use tokio::{
@@ -52,6 +53,9 @@ pub struct Connection {
      * not used, we use a heap allocated Vec to store received data
      */
     // buffer: [u8; 64 * 1024],
+    /**
+     * server_obj_id to UbusServerObject, mainly used to store the callbacks
+     */
     server_objs: Arc<Mutex<HashMap<u32, UbusServerObject>>>,
     /**
      * (need redesign) if a UbusMsg is received from socket, the MassageManager will use the (peer, objid, seq) to identify which received to send
@@ -67,9 +71,12 @@ pub struct Connection {
      * send message to MessageManager and let it send to wire
      */
     message_sender_tx: mpsc::Sender<UbusMsg>,
-    // invoke_handler: Option<Box<dyn Future<Output = Result<(), UbusError>>>>,
-    // message_manager: Option<Box<dyn Future<Output = ()>>>,
-    join_set: JoinSet<Result<(), UbusError>>,
+    /**
+     * run necessary loops in background, spawned in new(), aborted when dropped
+     *  - invoke_handler    :   handle client's INVOKEs and call callbacks
+     *  - message_manager   :   communicate with io (e.g. ubusd via UnixStream), dispatch messages through channels
+     */
+    communication_loops: JoinSet<Result<(), UbusError>>,
 }
 
 impl Connection {
@@ -93,7 +100,7 @@ impl Connection {
             message_sender_tx: message_sender_tx.clone(),
             // invoke_handler: None,
             // message_manager: None,
-            join_set: JoinSet::new(),
+            communication_loops: JoinSet::new(),
         };
 
         let reply_receivers_tx = conn.reply_receivers_tx.clone();
@@ -106,12 +113,12 @@ impl Connection {
 
         // conn.invoke_handler = Some(Box::new(invoke_handler));
         // conn.message_manager = Some(Box::new(message_manager));
-        conn.join_set.spawn(Self::run_invoke_handler(
+        conn.communication_loops.spawn(Self::run_invoke_handler(
             conn.server_objs.clone(),
             invoke_receiver_rx,
             message_sender_tx,
         ));
-        conn.join_set.spawn(Self::run_message_manager(
+        conn.communication_loops.spawn(Self::run_message_manager(
             io_reader,
             io_writer,
             message_sender_rx,
@@ -142,27 +149,17 @@ impl Connection {
         // futures::future::join_all([self.invoke_handler.unwrap()])
         // let mut set = JoinSet::new();
         // set.spawn((self.invoke_handler.unwrap()))
-        self.join_set.join_all().await;
+        self.communication_loops.join_all().await;
     }
 
-    fn header_by_obj_cmd(&mut self, obj_id: u32, cmd: UbusCmdType) -> UbusMsgHeader {
-        UbusMsgHeader {
-            version: UbusMsgVersion::CURRENT,
-            cmd_type: cmd,
-            sequence: self.generate_new_request_sequence(),
-            peer: obj_id.into(),
-        }
-    }
-
-    /**
-     * sequence is used to identify session, only client need to generate it, server should reply with same sequence with request's
-     */
-    fn generate_new_request_sequence(&mut self) -> BigEndian<u16> {
-        self.sequence += 1;
-        BigEndian::<u16>::from(self.sequence)
-        /* also seems okay to use random number */
-        // BigEndian::<u16>::from(random::<u16>(..))
-    }
+    // fn header_by_obj_cmd(&mut self, obj_id: u32, cmd: UbusCmdType) -> UbusMsgHeader {
+    //     UbusMsgHeader {
+    //         version: UbusMsgVersion::CURRENT,
+    //         cmd_type: cmd,
+    //         sequence: self.generate_new_request_sequence(),
+    //         peer: obj_id.into(),
+    //     }
+    // }
 
     // Get next message from ubus channel (blocking!)
     // pub async fn next_message(&mut self) -> Result<UbusMsg, UbusError> {
@@ -180,27 +177,27 @@ impl Connection {
 
     pub async fn invoke(
         &mut self,
-        obj: u32,
+        server_obj_id: HexU32,
         method: &str,
         req_args: MsgTable,
     ) -> Result<MsgTable, UbusError> {
-        let request_sequence = self.generate_new_request_sequence();
+        let new_request_sequence = self.generate_new_request_sequence();
         let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
         self.reply_receivers_tx
             .lock()
             .await
-            .insert(request_sequence.into(), reply_receiver_tx);
+            .insert(new_request_sequence.into(), reply_receiver_tx);
 
         // let now = std::time::Instant::now();
         self.send_message(UbusMsg {
             header: UbusMsgHeader {
                 version: UbusMsgVersion::CURRENT,
                 cmd_type: UbusCmdType::INVOKE,
-                sequence: request_sequence,
-                peer: obj.into(),
+                sequence: new_request_sequence,
+                peer: u32::from(server_obj_id).into(),
             },
             ubus_blobs: vec![
-                UbusBlob::ObjId(obj),
+                UbusBlob::ObjId(server_obj_id),
                 UbusBlob::Method(method.to_string()),
                 UbusBlob::Data(req_args),
             ],
@@ -213,11 +210,11 @@ impl Connection {
         'messages: loop {
             // let message = self.next_message().await?;
             let message = reply_receiver_rx.recv().await.unwrap();
-            if message.header.sequence != request_sequence {
+            if message.header.sequence != new_request_sequence {
                 // FIXME:
                 // continue;
             }
-            dbg!(&message);
+            // dbg!(&message);
 
             match message.header.cmd_type {
                 UbusCmdType::STATUS => {
@@ -302,13 +299,14 @@ impl Connection {
     //         .map_err(|e| UbusError::InvalidData("Failed to stringify"))
     // }
 
-    pub async fn lookup_id(&mut self, obj_path: &str) -> Result<u32, UbusError> {
+    pub async fn lookup_id(&mut self, obj_path: &str) -> Result<HexU32, UbusError> {
         Ok(self
             .lookup(obj_path)
             .await?
             .get(0)
             .ok_or(UbusError::InvalidPath(obj_path.to_string()))?
-            .id)
+            .id
+            .into())
     }
 
     pub async fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
@@ -343,7 +341,7 @@ impl Connection {
                 // let message = self.next_message().await?;
                 let message = reply_receiver_rx.recv().await.unwrap();
 
-                dbg!(&message);
+                // dbg!(&message);
                 // println!("{:#?}", &message);
                 if message.header.sequence != request_sequence {
                     continue;
@@ -373,8 +371,8 @@ impl Connection {
                         for blob in message.ubus_blobs {
                             match blob {
                                 UbusBlob::ObjPath(path) => obj.path = path.to_string(),
-                                UbusBlob::ObjId(id) => obj.id = id as u32,
-                                UbusBlob::ObjType(ty) => obj.objtype = ty as u32,
+                                UbusBlob::ObjId(id) => obj.id = id,
+                                UbusBlob::ObjType(ty) => obj.objtype = ty,
                                 UbusBlob::Signature(nested) => {
                                     obj.reported_signature = nested;
                                 }
@@ -391,8 +389,20 @@ impl Connection {
     }
 
     /*
+     * ### When add_object
      * send:        add_object: {"objpath":"test","signature":{"hello":{"id":5,"msg":3},"watch":{"id":5,"counter":5},"count":{"to":5,"string":3}}}
      * return:      data:       {"objid":2013531835,"objtype":-1292016789}
+     */
+
+    /*
+     * ### When handle INVOKE
+     * server:
+     * receive: invoke: {"objid":2013531835,"method":"hello","data":{"msg":"fsdfsdf"},"user":"fifv","group":"fifv"}
+     * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
+     * reply:   status: {"status":0,"objid":2013531835}
+     *
+     * FIXME: the read loop conflict with client read response after invoke
+     *
      */
 
     /**
@@ -418,7 +428,7 @@ impl Connection {
     pub async fn add_server(
         &mut self,
         server_obj_builder: UbusServerObjectBuilder,
-    ) -> Result<(), UbusError> {
+    ) -> Result<u32, UbusError> {
         let mut new_server_obj: UbusServerObject = UbusServerObject::default();
         // server_obj.methods = methods;
 
@@ -462,7 +472,7 @@ impl Connection {
                 if message.header.sequence != request_sequence {
                     continue;
                 }
-                dbg!(&message);
+                // dbg!(&message);
 
                 match message.header.cmd_type {
                     UbusCmdType::STATUS => {
@@ -501,19 +511,176 @@ impl Connection {
         self.server_objs
             .lock()
             .await
-            .insert(new_server_obj_id, new_server_obj);
-        Ok(())
+            .insert(new_server_obj_id.into(), new_server_obj);
+        Ok(new_server_obj_id.into())
     }
 
     /*
-     * server:
-     * receive: invoke: {"objid":2013531835,"method":"hello","data":{"msg":"fsdfsdf"},"user":"fifv","group":"fifv"}
-     * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
-     * reply:   status: {"status":0,"objid":2013531835}
+     *  ### When client subscribe
+     * client send:     subscribe:  {"objid":1711030590}
+     * server receive:  notify:     {"objid":130751756,"active":true}
+     * client receive:  status:     {"status":0}
      *
-     * FIXME: the read loop conflict with client read response after invoke
+     *  ### When client unsubscribe
+     * server receive:  notify:     {"objid":130751756,"active":false}
      *
+     *  ### When server notify
      */
+    pub async fn notify(
+        &mut self,
+        server_obj_id: u32,
+        method: &str,
+        data: MsgTable,
+    ) -> Result<(), UbusError> {
+        let new_request_sequence = self.generate_new_request_sequence();
+
+        self.send_message(UbusMsg {
+            header: UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::NOTIFY,
+                sequence: new_request_sequence,
+                peer: server_obj_id.into(),
+            },
+            ubus_blobs: vec![
+                UbusBlob::ObjId(server_obj_id.into()),
+                UbusBlob::Method(method.into()),
+                UbusBlob::Data(data),
+            ],
+        })
+        .await?;
+
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+        self.reply_receivers_tx
+            .lock()
+            .await
+            .insert(new_request_sequence.into(), reply_receiver_tx);
+
+        /*
+         * when server send a notify, it will receive:
+         *      1.   Status::OK - send to ubus successfully
+         *      2..  Status::OK - each successfully received client send one, infinitly
+         */
+        'messages: loop {
+            // let message = self.next_message().await?;
+            let message = reply_receiver_rx.recv().await.unwrap();
+            if message.header.sequence != new_request_sequence {
+                // FIXME:
+                // continue;
+            }
+            // dbg!(&message);
+
+            match message.header.cmd_type {
+                UbusCmdType::STATUS => {
+                    for blob in message.ubus_blobs {
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                break 'messages;
+                            }
+                            UbusBlob::Status(status) => {
+                                return Err(UbusError::Status(status));
+                            }
+                            UbusBlob::Subscribers(subscribers) => {
+                                // println!("subscribers: {:?}", subscribers);
+                            }
+                            _ => {}
+                        }
+                    }
+                    /* maybe no need to know how much client respond a Status::OK, it's not easy to track all */
+                    break 'messages;
+                    // return Err(UbusError::InvalidData("Invalid status message"));
+                }
+                unknown => {
+                    dbg!(unknown);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn subscribe(
+        &mut self,
+        listener_obj_id: HexU32,
+        server_obj_id: HexU32,
+    ) -> Result<(), UbusError> {
+        let new_request_sequence = self.generate_new_request_sequence();
+
+        self.send_message(UbusMsg {
+            header: UbusMsgHeader {
+                version: UbusMsgVersion::CURRENT,
+                cmd_type: UbusCmdType::SUBSCRIBE,
+                sequence: new_request_sequence,
+                peer: 0.into(),
+            },
+            ubus_blobs: vec![
+                UbusBlob::ObjId(listener_obj_id),
+                UbusBlob::Target(server_obj_id),
+            ],
+        })
+        .await?;
+
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+        self.reply_receivers_tx
+            .lock()
+            .await
+            .insert(new_request_sequence.into(), reply_receiver_tx);
+
+        /*
+         * when server send a notify, it will receive:
+         *      1.   Status::OK - send to ubus successfully
+         *      2..  Status::OK - each successfully received client send one, infinitly
+         */
+        'messages: loop {
+            // let message = self.next_message().await?;
+            let message = reply_receiver_rx.recv().await.unwrap();
+            if message.header.sequence != new_request_sequence {
+                // FIXME:
+                // continue;
+            }
+            // dbg!(&message);
+
+            match message.header.cmd_type {
+                UbusCmdType::STATUS => {
+                    for blob in message.ubus_blobs {
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                break 'messages;
+                            }
+                            UbusBlob::Status(status) => {
+                                return Err(UbusError::Status(status));
+                            }
+                            UbusBlob::Subscribers(subscribers) => {
+                                // println!("subscribers: {:?}", subscribers);
+                            }
+                            _ => {}
+                        }
+                    }
+                    /* maybe no need to know how much client respond a Status::OK, it's not easy to track all */
+                    break 'messages;
+                    // return Err(UbusError::InvalidData("Invalid status message"));
+                }
+                unknown => {
+                    dbg!(unknown);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/**
+ * internally used
+ */
+impl Connection {
+    /**
+     * sequence is used to identify session, only client need to generate it, server should reply with same sequence with request's
+     */
+    fn generate_new_request_sequence(&mut self) -> BigEndian<u16> {
+        self.sequence += 1;
+        BigEndian::<u16>::from(self.sequence)
+        /* also seems okay to use random number */
+        // BigEndian::<u16>::from(random::<u16>(..))
+    }
+
     async fn run_invoke_handler(
         server_objs: Arc<Mutex<HashMap<u32, UbusServerObject>>>,
         mut invoke_receiver_rx: mpsc::Receiver<UbusMsg>,
@@ -533,7 +700,7 @@ impl Connection {
             // if message.header.sequence != header.sequence {
             //     continue;
             // }
-            dbg!(&message);
+            // dbg!(&message);
 
             match message.header.cmd_type {
                 /*
@@ -588,8 +755,10 @@ impl Connection {
 
                         /* reply to client */
 
-                        if let Some(server_obj) =
-                            server_objs.lock().await.get(&requested_server_obj_id)
+                        if let Some(server_obj) = server_objs
+                            .lock()
+                            .await
+                            .get(&requested_server_obj_id.into())
                         {
                             match server_obj.methods.get(&method_name) {
                                 Some(method) => {
@@ -687,6 +856,7 @@ impl Connection {
             loop {
                 tokio::select! {
                     Ok(message) = UbusMsg::from_io(&mut io_reader) => {
+                        dbg!(&message);
                         match message {
                             UbusMsg {
                                 header:
@@ -713,7 +883,38 @@ impl Connection {
                                     },
                                 ubus_blobs: _,
                             } => {
-                                println!("hello!");
+                                println!("new connection to ubus got HELLO! my client_id is {:08x}", message.header.peer);
+                            }
+                            /*
+                             * if server receive UbusCmdType::NOTIFY, it's ubus tell server that a client subscribers/unsubscribes
+                             * client will receive a UbusCmdType::INVOKE if got notified
+                             */
+                            UbusMsg {
+                                header:
+                                    UbusMsgHeader {
+                                        cmd_type: UbusCmdType::NOTIFY,
+                                        version: _,
+                                        sequence: _,
+                                        peer: _,
+                                    },
+                                ubus_blobs: _,
+                            } => {
+                                log::info!("client {} try to {}",
+                                    if let Some(id) = message.get_attr_obj_id() {
+                                        format!("{:08x}", id)
+                                    } else {
+                                        "<UNKNOWN>".into()
+                                    },
+                                    if let Some(active) = message.get_attr_active() {
+                                        if active {
+                                            "subscribe"
+                                        } else {
+                                            "unsubscribe"
+                                        }
+                                    } else {
+                                        "<UNKNOWN>"
+                                    }
+                                );
                             }
                             UbusMsg {
                                 header:
@@ -728,7 +929,10 @@ impl Connection {
                                 if let Some(receiver) =
                                     reply_receivers_tx.lock().await.get(&seq.into())
                                 {
-                                    receiver.send(message).await.expect("why the rx closed?");
+                                    let _ = receiver.send(message).await.or_else(|e| {
+                                        log::trace!("try to send to reply_receivers_rx[{}] but is dropped, rx may not care about messages any more", seq);
+                                        Err(e)
+                                    });
                                 }
                             }
 
@@ -742,24 +946,5 @@ impl Connection {
             }
         };
         message_manager
-    }
-
-    /* UNIMPLEMENTED */
-    pub async fn notify(&mut self, server_obj: &UbusServerObject) {
-        let new_request_sequence = self.generate_new_request_sequence();
-        self.send_message(UbusMsg {
-            header: UbusMsgHeader {
-                version: UbusMsgVersion::CURRENT,
-                cmd_type: UbusCmdType::NOTIFY,
-                sequence: new_request_sequence,
-                peer: server_obj.id.into(),
-            },
-            ubus_blobs: vec![
-                UbusBlob::ObjId(server_obj.id),
-                UbusBlob::Status(UbusMsgStatus::OK),
-            ],
-        })
-        .await
-        .expect("???");
     }
 }

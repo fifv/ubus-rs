@@ -21,11 +21,11 @@ values!(pub UbusCmdType(u8) {
     REMOVE_OBJECT   = 0x07,
     SUBSCRIBE       = 0x08,
     UNSUBSCRIBE     = 0x09,
-    NOTIFY          = 0x10,
-    MONITOR         = 0x11,
+    NOTIFY          = 0x0a,
+    MONITOR         = 0x0b,
 });
 
-values!(pub UbusMsgStatus(i32) {
+values!(pub UbusMsgStatus(u32) {
     OK                    = 0x00,
     INVALID_COMMAND       = 0x01,
     INVALID_ARGUMENT      = 0x02,
@@ -87,10 +87,10 @@ impl UbusMsg {
         /* use the length extracted from blob header, read such length of blob data  */
         let mut ubusmsg_data_buffer = vec![0u8; tag.inner_len()];
         io.get(&mut ubusmsg_data_buffer).await?;
+        /* the magic parser, convert bytes to Vec<UbusBlob> */
         let blobs = BlobIter::new(&ubusmsg_data_buffer)
             .map(|blob| blob.try_into())
             .try_collect::<Vec<UbusBlob>>()?;
-        // let blob = UbusBlob::from_tag_and_data(tag, ubusmsg_data_buffer).unwrap();
 
         Ok(UbusMsg {
             header,
@@ -109,10 +109,19 @@ impl UbusMsg {
         self.into()
     }
 
-    pub fn get_obj_id(&self) -> Option<u32> {
+    pub fn get_attr_obj_id(&self) -> Option<u32> {
         self.ubus_blobs.iter().find_map(|blob| {
             if let UbusBlob::ObjId(obj_id) = blob {
-                Some(*obj_id)
+                Some((*obj_id).into())
+            } else {
+                None
+            }
+        })
+    }
+    pub fn get_attr_active(&self) -> Option<bool> {
+        self.ubus_blobs.iter().find_map(|blob| {
+            if let UbusBlob::Active(active) = blob {
+                Some((*active).into())
             } else {
                 None
             }

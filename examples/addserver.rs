@@ -1,7 +1,7 @@
-use std::{collections::HashMap, env, path::Path, thread::sleep, time::Duration};
+use std::{env, path::Path};
 
 use serde_json::json;
-use ubus::{MsgTable, UbusMethod, UbusServerObjectBuilder};
+use ubus::{MsgTable, UbusServerObjectBuilder};
 
 #[tokio::main]
 async fn main() {
@@ -19,24 +19,24 @@ async fn main() {
             return;
         }
     };
-    fn handle_hi(req_args: &MsgTable) -> MsgTable {
+    fn handle_hi(_req_args: &MsgTable) -> MsgTable {
         MsgTable::try_from(r#"{"haha": true}"#).unwrap()
     }
     let some_captured_value = 1;
-    let server_obj1 = connection
+    let _server_obj1 = connection
         .add_server(
             UbusServerObjectBuilder::new(obj_path)
                 .method("hi", Box::new(handle_hi))
                 .method(
                     "hii",
-                    Box::new(|req_args: &MsgTable| {
+                    Box::new(|_req_args: &MsgTable| {
                         MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
                     }),
                 )
                 .method("echo", Box::new(|req_args: &MsgTable| req_args.to_owned()))
                 .method(
                     "closure",
-                    Box::new(move |req_args: &MsgTable| {
+                    Box::new(move |_req_args: &MsgTable| {
                         json!({"captured-value":some_captured_value})
                             .try_into()
                             .unwrap()
@@ -55,7 +55,7 @@ async fn main() {
     let _ = UbusServerObjectBuilder::new("t2")
         .method(
             "hi",
-            Box::new(|req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()),
+            Box::new(|_req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()),
         )
         .register(&mut connection)
         .await

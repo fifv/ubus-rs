@@ -4,9 +4,9 @@ use ubus::MsgTable;
 
 #[tokio::main]
 async fn main() {
-    let obj_path = "test";
-    let method = "echo";
-    let req_args = r#"{"name":"eth0"}"#;
+    let _obj_path = "test";
+    let _method = "echo";
+    let _req_args = r#"{"name":"eth0"}"#;
 
     let obj_path = "ttt";
     let method = "echo";
@@ -27,17 +27,17 @@ async fn main() {
     // let obj: UbusObject = serde_json::from_str(&obj).unwrap();
     let req_args = MsgTable::try_from(req_args).unwrap();
     // let now = std::time::Instant::now();
-    let reply_args = connection.invoke(obj.id, method, req_args).await.unwrap();
+    let _reply_args = connection.invoke(obj.id, method, req_args).await.unwrap();
     // println!("Elapsed: {:.2?}", now.elapsed());
-    let reply_args = connection
+    let _reply_args = connection
         .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
         .await
         .unwrap();
-    let reply_args = connection
+    let _reply_args = connection
         .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
         .await
         .unwrap();
-    let reply_args = connection
+    let _reply_args = connection
         .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
         .await
         .unwrap();

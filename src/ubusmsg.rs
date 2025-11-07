@@ -2,7 +2,6 @@ use crate::{AsyncIoReader, BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError}
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
 use serde::{Deserialize, Serialize};
-use std::borrow::ToOwned;
 use std::vec;
 use std::vec::Vec;
 use storage_endian::{BEu16, BEu32};

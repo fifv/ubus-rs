@@ -1,13 +1,12 @@
 use crate::*;
 
-use core::{default, ops::Not};
-use std::{boxed::Box, collections::HashMap, dbg, println, string::ToString, sync::Arc, vec::Vec};
+use core::ops::Not;
+use std::{collections::HashMap, dbg, println, string::ToString, sync::Arc, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
 use std::vec;
 use storage_endian::BigEndian;
 use tokio::{
-    pin,
     sync::{Mutex, mpsc},
     task::JoinSet,
 };
@@ -458,7 +457,7 @@ impl Connection {
             .await?;
 
             /* Normally we will get a UbusCmdType::DATA then a UbusCmdType::STATUS */
-            let reply_args = 'message_loop: loop {
+            let _reply_args = 'message_loop: loop {
                 let message = reply_receiver_rx.recv().await.unwrap();
                 if message.header.sequence != request_sequence {
                     continue;

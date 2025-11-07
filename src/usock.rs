@@ -23,7 +23,13 @@ impl AsyncIoWriter for OwnedWriteHalf {
 
 impl Connection {
     pub async fn connect(path: &Path) -> Result<Self, UbusError> {
-        Self::new(UnixStream::connect(path).await.map_err(UbusError::IO)?.into_split()).await
+        Self::new(
+            UnixStream::connect(path)
+                .await
+                .map_err(UbusError::IO)?
+                .into_split(),
+        )
+        .await
     }
 }
 

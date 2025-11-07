@@ -43,7 +43,7 @@ impl UbusServerObjectBuilder {
         self.methods.insert(name.into(), callback);
         self
     }
-    pub async fn register(self, conn: &mut Connection) -> Result<&UbusServerObject, UbusError> {
+    pub async fn register(self, conn: &mut Connection) -> Result<(), UbusError> {
         conn.add_server(self).await
     }
 }

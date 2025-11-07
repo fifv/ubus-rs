@@ -229,7 +229,11 @@ impl Default for MsgTable {
 
 impl core::fmt::Debug for MsgTable {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "MsgTable {}", self.to_string_clone().unwrap_or("<FAILED>".to_string()) )
+        write!(
+            f,
+            "MsgTable {}",
+            self.to_string_clone().unwrap_or("<FAILED>".to_string())
+        )
     }
 }
 
@@ -323,7 +327,6 @@ impl TryFrom<MsgTable> for JsonObject {
 }
 /* TODO: use something like Map<String, Map<String, BlobMsgType>> to describe UbusBlob::Signature */
 // pub struct MethodSignature(Vec<>)
-
 
 /**
  * BlobMsgBuilder is used to convert BlobMsg from "native rust struct" to "raw bytes on wire"

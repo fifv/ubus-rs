@@ -21,7 +21,7 @@ async fn test() {
 
     // tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    let mut connection = Connection::new(client).await.unwrap();
+    let mut connection = Connection::new(client.into_split()).await.unwrap();
 
     let obj = connection
         .lookup(

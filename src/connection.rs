@@ -1,14 +1,16 @@
 use crate::*;
 
 use core::{default, ops::Not};
-use std::{
-    collections::HashMap, dbg, println, string::ToString, sync::Arc, vec::Vec,
-};
+use std::{boxed::Box, collections::HashMap, dbg, println, string::ToString, sync::Arc, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
 use std::vec;
 use storage_endian::BigEndian;
-use tokio::sync::{Mutex, mpsc};
+use tokio::{
+    pin,
+    sync::{Mutex, mpsc},
+    task::JoinSet,
+};
 use ubuserror::*;
 
 #[derive(Copy, Clone)]
@@ -51,7 +53,7 @@ pub struct Connection {
      * not used, we use a heap allocated Vec to store received data
      */
     // buffer: [u8; 64 * 1024],
-    server_objs: HashMap<u32, UbusServerObject>,
+    server_objs: Arc<Mutex<HashMap<u32, UbusServerObject>>>,
     /**
      * (need redesign) if a UbusMsg is received from socket, the MassageManager will use the (peer, objid, seq) to identify which received to send
      * seq
@@ -66,95 +68,57 @@ pub struct Connection {
      * send message to MessageManager and let it send to wire
      */
     message_sender_tx: mpsc::Sender<UbusMsg>,
+    // invoke_handler: Option<Box<dyn Future<Output = Result<(), UbusError>>>>,
+    // message_manager: Option<Box<dyn Future<Output = ()>>>,
+    join_set: JoinSet<Result<(), UbusError>>,
 }
 
 impl Connection {
     /**
      * Create a new ubus connection from an existing IO
-     * 
+     *
      */
     pub async fn new<R: AsyncIoReader, W: AsyncIoWriter>(
-        (mut io_reader, mut io_writer): (R, W),
+        (io_reader, io_writer): (R, W),
     ) -> Result<Self, UbusError> {
         let (invoke_receiver_tx, invoke_receiver_rx) = mpsc::channel(8);
-        let (message_sender_tx, mut message_sender_rx) = mpsc::channel(8);
+        let (message_sender_tx, message_sender_rx) = mpsc::channel(8);
 
-        let conn = Self {
+        let mut conn = Self {
             // peer: 0,
             sequence: 0,
             // buffer: [0u8; 64 * 1024],
-            server_objs: HashMap::new(),
+            server_objs: Arc::new(Mutex::new(HashMap::new())),
             reply_receivers_tx: Arc::new(Mutex::new(HashMap::new())),
             invoke_receiver_tx: invoke_receiver_tx.clone(),
             message_sender_tx: message_sender_tx.clone(),
+            // invoke_handler: None,
+            // message_manager: None,
+            join_set: JoinSet::new(),
         };
-
-
-        tokio::spawn(conn.listening(invoke_receiver_rx, message_sender_tx));
 
         let reply_receivers_tx = conn.reply_receivers_tx.clone();
         let invoke_receiver_tx1 = invoke_receiver_tx;
+        /*
+         * spawn and move the io to it makes it run forever, independent of how long the Connection struct lives
+         */
         /* message manager */
-        tokio::spawn(async move {
-            /* move io here */
-            loop {
-                tokio::select! {
-                    Ok(message) = UbusMsg::from_io(&mut io_reader) => {
-                        match message {
-                            UbusMsg {
-                                header:
-                                    UbusMsgHeader {
-                                        cmd_type: UbusCmdType::INVOKE,
-                                        version: _,
-                                        sequence: _,
-                                        peer: _,
-                                    },
-                                ubus_blobs: _,
-                            } => {
-                                invoke_receiver_tx1
-                                    .send(message)
-                                    .await
-                                    .expect("why the rx closed?");
-                            }
-                            UbusMsg {
-                                header:
-                                    UbusMsgHeader {
-                                        cmd_type: UbusCmdType::HELLO,
-                                        version: _,
-                                        sequence: _,
-                                        peer: _,
-                                    },
-                                ubus_blobs: _,
-                            } => {
-                                println!("hello!");
-                            }
-                            UbusMsg {
-                                header:
-                                    UbusMsgHeader {
-                                        cmd_type: _,
-                                        version: _,
-                                        sequence: seq,
-                                        peer: _,
-                                    },
-                                ubus_blobs: _,
-                            } => {
-                                if let Some(receiver) =
-                                    reply_receivers_tx.lock().await.get(&seq.into())
-                                {
-                                    receiver.send(message).await.expect("why the rx closed?");
-                                }
-                            }
+        /* move io here */
 
-                        }
-
-                    },
-                    Some(message) = message_sender_rx.recv() => {
-                        io_writer.put(&message.to_bytes()).await.expect("why send failed")
-                    },
-                }
-            }
-        });
-
+        // conn.invoke_handler = Some(Box::new(invoke_handler));
+        // conn.message_manager = Some(Box::new(message_manager));
+        conn.join_set.spawn(Self::run_invoke_handler(
+            conn.server_objs.clone(),
+            invoke_receiver_rx,
+            message_sender_tx,
+        ));
+        conn.join_set.spawn(Self::run_message_manager(
+            io_reader,
+            io_writer,
+            message_sender_rx,
+            reply_receivers_tx,
+            invoke_receiver_tx1,
+        ));
 
         // ubus server should say hello on connect
         // let message = conn.next_message().await?;
@@ -169,6 +133,17 @@ impl Connection {
         // conn.peer = message.header.peer.into();
 
         Ok(conn)
+    }
+
+    /**
+     * block forever.
+     * this doesn't need to be call to run, loops are running in background when `new()`
+     */
+    pub async fn run(self) {
+        // futures::future::join_all([self.invoke_handler.unwrap()])
+        // let mut set = JoinSet::new();
+        // set.spawn((self.invoke_handler.unwrap()))
+        self.join_set.join_all().await;
     }
 
     fn header_by_obj_cmd(&mut self, obj_id: u32, cmd: UbusCmdType) -> UbusMsgHeader {
@@ -195,7 +170,6 @@ impl Connection {
     //     // UbusMsg::from_io(&mut self.io).await
     //     // self.
     // }
-
     pub async fn send_message(&self, message: UbusMsg) -> Result<(), UbusError> {
         // self.io.put(&Into::<Vec<u8>>::into(message))
         // self.io.put(&message.to_bytes()).await
@@ -422,7 +396,6 @@ impl Connection {
      * return:      data:       {"objid":2013531835,"objtype":-1292016789}
      */
 
-
     /**
     Regsister a server object with obj_path, method_name and method_callbacks
       use a `UbusServerObjectBuilder` to build them
@@ -446,7 +419,7 @@ impl Connection {
     pub async fn add_server(
         &mut self,
         server_obj_builder: UbusServerObjectBuilder,
-    ) -> Result<&UbusServerObject, UbusError> {
+    ) -> Result<(), UbusError> {
         let mut new_server_obj: UbusServerObject = UbusServerObject::default();
         // server_obj.methods = methods;
 
@@ -526,8 +499,11 @@ impl Connection {
 
         new_server_obj.methods = server_obj_builder.methods;
         let new_server_obj_id = new_server_obj.id;
-        self.server_objs.insert(new_server_obj_id, new_server_obj);
-        Ok(&self.server_objs.get(&new_server_obj_id).unwrap())
+        self.server_objs
+            .lock()
+            .await
+            .insert(new_server_obj_id, new_server_obj);
+        Ok(())
     }
 
     /*
@@ -539,8 +515,8 @@ impl Connection {
      * FIXME: the read loop conflict with client read response after invoke
      *
      */
-    pub async fn listening(
-        &self,
+    async fn run_invoke_handler(
+        server_objs: Arc<Mutex<HashMap<u32, UbusServerObject>>>,
         mut invoke_receiver_rx: mpsc::Receiver<UbusMsg>,
         message_sender_tx: mpsc::Sender<UbusMsg>,
     ) -> Result<(), UbusError> {
@@ -613,7 +589,9 @@ impl Connection {
 
                         /* reply to client */
 
-                        if let Some(server_obj) = self.server_objs.get(&requested_server_obj_id) {
+                        if let Some(server_obj) =
+                            server_objs.lock().await.get(&requested_server_obj_id)
+                        {
                             match server_obj.methods.get(&method_name) {
                                 Some(method) => {
                                     tokio::spawn(async {});
@@ -699,9 +677,72 @@ impl Connection {
         }
     }
 
-    pub async fn run_message_manager(&mut self) -> Result<(), UbusError> {
-        tokio::spawn(async move {});
-        Ok(())
+    fn run_message_manager<R: AsyncIoReader, W: AsyncIoWriter>(
+        mut io_reader: R,
+        mut io_writer: W,
+        mut message_sender_rx: mpsc::Receiver<UbusMsg>,
+        reply_receivers_tx: Arc<Mutex<HashMap<u16, mpsc::Sender<UbusMsg>>>>,
+        invoke_receiver_tx1: mpsc::Sender<UbusMsg>,
+    ) -> impl Future<Output = Result<(), UbusError>> {
+        let message_manager = async move {
+            loop {
+                tokio::select! {
+                    Ok(message) = UbusMsg::from_io(&mut io_reader) => {
+                        match message {
+                            UbusMsg {
+                                header:
+                                    UbusMsgHeader {
+                                        cmd_type: UbusCmdType::INVOKE,
+                                        version: _,
+                                        sequence: _,
+                                        peer: _,
+                                    },
+                                ubus_blobs: _,
+                            } => {
+                                invoke_receiver_tx1
+                                    .send(message)
+                                    .await
+                                    .expect("why the rx closed?");
+                            }
+                            UbusMsg {
+                                header:
+                                    UbusMsgHeader {
+                                        cmd_type: UbusCmdType::HELLO,
+                                        version: _,
+                                        sequence: _,
+                                        peer: _,
+                                    },
+                                ubus_blobs: _,
+                            } => {
+                                println!("hello!");
+                            }
+                            UbusMsg {
+                                header:
+                                    UbusMsgHeader {
+                                        cmd_type: _,
+                                        version: _,
+                                        sequence: seq,
+                                        peer: _,
+                                    },
+                                ubus_blobs: _,
+                            } => {
+                                if let Some(receiver) =
+                                    reply_receivers_tx.lock().await.get(&seq.into())
+                                {
+                                    receiver.send(message).await.expect("why the rx closed?");
+                                }
+                            }
+
+                        }
+
+                    },
+                    Some(message) = message_sender_rx.recv() => {
+                        io_writer.put(&message.to_bytes()).await.expect("why send failed")
+                    },
+                }
+            }
+        };
+        message_manager
     }
 
     /* UNIMPLEMENTED */

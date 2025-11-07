@@ -29,10 +29,22 @@ async fn main() {
     // let now = std::time::Instant::now();
     let reply_args = connection.invoke(obj.id, method, req_args).await.unwrap();
     // println!("Elapsed: {:.2?}", now.elapsed());
-    let reply_args = connection.invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap()).await.unwrap();
-    let reply_args = connection.invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap()).await.unwrap();
-    let reply_args = connection.invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap()).await.unwrap();
-    let reply_args = connection.invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap()).await.unwrap();
+    let reply_args = connection
+        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
+        .await
+        .unwrap();
+    let reply_args = connection
+        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
+        .await
+        .unwrap();
+    let reply_args = connection
+        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
+        .await
+        .unwrap();
+    let reply_args = connection
+        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
+        .await
+        .unwrap();
     println!("{}", String::try_from(reply_args).unwrap());
 
     // Value::from(bi);

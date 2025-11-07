@@ -69,7 +69,7 @@ mod tests {
         match first {
             Blob::UbusBlob(UbusBlob::ObjId(v)) => {
                 // BlobBuilder wrote a u32 payload; UbusBlob parses into i32 -> compare by bit pattern
-                assert_eq!(v as i64 as u32, id_value);
+                assert_eq!(u32::from(v), id_value);
             }
             other => panic!("unexpected first variant: {:?}", other),
         }

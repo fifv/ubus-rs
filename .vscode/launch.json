@@ -140,6 +140,46 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug example 'addserver'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=addserver",
+                    "--package=ubus",
+                ],
+                "filter": {
+                    "name": "addserver",
+                    "kind": "example"
+                }
+            },
+            "args": [
+                    "test",
+                    "hello",
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'addserver'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=addserver",
+                    "--package=ubus"
+                ],
+                "filter": {
+                    "name": "addserver",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug integration test 'invoke'",
             "cargo": {
                 "args": [

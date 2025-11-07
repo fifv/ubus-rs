@@ -22,8 +22,8 @@ async fn main() {
     let server_obj1_id = connection
         .add_server(UbusServerObjectBuilder::new("saber").method(
             "click",
-            Box::new(move |_req_args: &MsgTable| {
-                log::trace!("click got notified!");
+            Box::new(move |req_args: &MsgTable| {
+                log::trace!("click got notified! {}", req_args.to_string_clone().unwrap());
                 json!({"captured-value":some_captured_value})
                     .try_into()
                     .unwrap()

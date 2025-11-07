@@ -127,6 +127,15 @@ impl UbusMsg {
             }
         })
     }
+    pub fn get_attr_status(&self) -> Option<UbusMsgStatus> {
+        self.ubus_blobs.iter().find_map(|blob| {
+            if let UbusBlob::Status(status) = blob {
+                Some((*status).into())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl From<UbusMsg> for Vec<u8> {

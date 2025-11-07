@@ -13,7 +13,7 @@ maintenance = { status = "experimental" }
 
 [features]
 default = []
-no_std  = []
+# no_std  = []
 
 [dependencies]
 env_logger = "0.11.8"

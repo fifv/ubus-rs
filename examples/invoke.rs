@@ -46,6 +46,12 @@ async fn main() {
         .await
         .unwrap();
     println!("{}", String::try_from(reply_args).unwrap());
+    // loop {
+    //     let reply_args = connection
+    //         .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
+    //         .await
+    //         .unwrap();
+    // }
 
     // Value::from(bi);
     // let json_str = {

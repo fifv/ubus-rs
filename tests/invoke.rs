@@ -21,7 +21,7 @@ async fn test_invoke_with_correct_raw_bytes() {
     let mut connection = Connection::new(client.into_split()).await.unwrap();
 
     connection
-        .invoke(0x13333337, "info", r#"{}"#.try_into().unwrap())
+        .invoke(0x13333337.into(), "info", r#"{}"#.try_into().unwrap())
         .await
         .unwrap();
 }

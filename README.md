@@ -6,6 +6,34 @@ ubus (Rust)
 This is a pure Rust library for implementing [OpenWRT ubus](https://openwrt.org/docs/techref/ubus) clients.
 
 
+
+Quick Try
+---------
+
+1. make sure `ubusd` is running, and you are using `root` to run examples (or hack `ubusd`'s `ubusd_acl_check()`) to skip root check, see above
+2. make sure your rust toolchain is nightly, because I use the `try_collect()` features
+3. `cargo run --example=addserver`   - start the server
+4. `cargo run --example=invoke`      - invoke server's method and print result
+5. `cargo run --example=ubuscall ttt echo '{"1": true}'`   - another way to invoke server's method and print result
+6. `cargo run --example=subscribe`   - subscribe to server and get notifications
+
+Supported
+---------
+
+* High-level abstraction for `lookup` command
+* High level abstraction for `call` command
+* High level abstraction for server object
+* High level abstraction for `subscribe` / `notify` commands
+* Async with Tokio
+* JSON support
+
+TODO
+----
+
+* `unsubscribe` / `remove_server`
+
+
+
 Technical Notes
 ---------
 
@@ -28,18 +56,3 @@ Seems only root can connect to `ubusd`? To tests and development, I add an early
 Signature varification is skipped, (`ubusd` also doesn't care about it), making transfer any valid json possible. This is the behaviour of `libubus` and `ubus` cli.
 
 Seems `ubusd` even doesn't care about method existence, its server object's responsibilty to return a `method not found` status.
-
-Supported
----------
-
-* High-level abstraction for `lookup` command
-* High level abstraction for `call` command
-* JSON support
-
-TODO
-----
-
-* Async with Tokio
-* High level abstraction for server object
-* High level abstraction for `subscribe`/`unsubscribe` commands
-

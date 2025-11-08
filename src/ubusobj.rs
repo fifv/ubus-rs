@@ -67,7 +67,7 @@ impl std::fmt::Debug for UbusServerObject {
 }
 
 /**
- * used in look up
+ * used in lookup
  */
 #[derive(Default, Debug, Clone)]
 pub struct UbusObject {

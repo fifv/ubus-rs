@@ -61,18 +61,21 @@ async fn main() {
         .await
         .unwrap();
 
-    loop {
+    for i in 0.. {
         connection
             .notify(
                 server_obj1_id,
                 "click",
-                json!({"event": "left-click"}).try_into().unwrap(),
+                json!({"event": "left-click", "count": i})
+                    .try_into()
+                    .unwrap(),
             )
             .await
             .unwrap();
         // sleep(Duration::from_millis(1000)).await;
-        sleep(Duration::from_millis(3000)).await;
+        // sleep(Duration::from_millis(3000)).await;
     }
+
 
     log::error!("?");
     /* this do nothing, same as sleep(Forever) */

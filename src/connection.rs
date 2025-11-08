@@ -190,6 +190,7 @@ impl Connection {
         req_args: MsgTable,
     ) -> Result<MsgTable, UbusError> {
         let new_request_sequence = self.generate_new_request_sequence();
+
         let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(4);
         self.reply_receivers_tx
             .lock()
@@ -328,7 +329,7 @@ impl Connection {
     pub async fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
         let new_request_sequence = self.generate_new_request_sequence();
 
-        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(4);
         self.reply_receivers_tx
             .lock()
             .unwrap()
@@ -457,7 +458,7 @@ impl Connection {
         {
             let new_request_sequence = self.generate_new_request_sequence();
 
-            let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
+            let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(4);
             self.reply_receivers_tx
                 .lock()
                 .unwrap()
@@ -560,6 +561,12 @@ impl Connection {
     ) -> Result<(), UbusError> {
         let new_request_sequence = self.generate_new_request_sequence();
 
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(4);
+        self.reply_receivers_tx
+            .lock()
+            .unwrap()
+            .insert(new_request_sequence.into(), reply_receiver_tx);
+
         // println!("1");
         self.send_message(UbusMsg {
             header: UbusMsgHeader {
@@ -580,13 +587,11 @@ impl Connection {
         /*
          *  ISSUE: the reply of notify is useless, but unlimited
          * it causes race and stuck sometimes... why?
+         * ↑ because I register callback after send_message(), so if reply is instant, the message manager get a message before
+         * I register the receiver, and it doesn't find a receiver, just drop the message
          */
 
-        // let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(1);
-        // self.reply_receivers_tx
-        //     .lock()
-        //     .await
-        //     .insert(new_request_sequence.into(), reply_receiver_tx);
+
         // println!("3");
 
         /*
@@ -594,50 +599,52 @@ impl Connection {
          *      1.   Status::OK - send to ubus successfully
          *      2..  Status::OK - each successfully received client send one, infinitly
          */
-        // 'messages: loop {
-        //     // let message = self.next_message().await?;
-        //     let message = reply_receiver_rx.recv().await.unwrap();
-        //     if message.header.sequence != new_request_sequence {
-        //         // FIXME:
-        //         // continue;
-        //     }
-        //     // dbg!(&message);
-        //     // println!("4");
+        'messages: loop {
+            // let message = self.next_message().await?;
+            let message = reply_receiver_rx.recv().await.unwrap();
 
-        //     /*
-        //      * client may report  Status(METHOD_NOT_FOUND) , but thats not we care about, only use a dubug
-        //      */
-        //     match message.header.cmd_type {
-        //         UbusCmdType::STATUS => {
-        //             for blob in message.ubus_blobs {
-        //                 match blob {
-        //                     UbusBlob::Status(UbusMsgStatus::OK) => {
-        //                         break 'messages;
-        //                     }
-        //                     UbusBlob::Status(status) => {
-        //                         // return Err(UbusError::Status(status));
-        //                         log::trace!(
-        //                             "subscriber {:08x} report error: {}",
-        //                             message.header.peer,
-        //                             status
-        //                         )
-        //                     }
-        //                     /* only reach here if no subscribers exist, with an empty MsgTable */
-        //                     UbusBlob::Subscribers(subscribers) => {
-        //                         // println!("subscribers: {:?}", subscribers);
-        //                     }
-        //                     _ => {}
-        //                 }
-        //             }
-        //             /* maybe no need to know how much client respond a Status::OK, it's not easy to track all */
-        //             break 'messages;
-        //             // return Err(UbusError::InvalidData("Invalid status message"));
-        //         }
-        //         unknown => {
-        //             dbg!(unknown);
-        //         }
-        //     }
-        // }
+            // dbg!(&message);
+            // println!("4");
+
+            /*
+             * client may report  Status(METHOD_NOT_FOUND) , but thats not we care about, only use as a debug
+             */
+            match message.header.cmd_type {
+                UbusCmdType::STATUS => {
+                    self.reply_receivers_tx
+                        .lock()
+                        .unwrap()
+                        .remove(&new_request_sequence.into());
+
+                    for blob in message.ubus_blobs {
+                        match blob {
+                            UbusBlob::Status(UbusMsgStatus::OK) => {
+                                break 'messages;
+                            }
+                            UbusBlob::Status(status) => {
+                                // return Err(UbusError::Status(status));
+                                log::trace!(
+                                    "subscriber {:08x} report error: {}",
+                                    message.header.peer,
+                                    status
+                                )
+                            }
+                            /* only reach here if no subscribers exist, with an empty MsgTable */
+                            UbusBlob::Subscribers(subscribers) => {
+                                // println!("subscribers: {:?}", subscribers);
+                            }
+                            _ => {}
+                        }
+                    }
+                    /* maybe no need to know how much client respond a Status::OK, it's not easy to track all */
+                    break 'messages;
+                    // return Err(UbusError::InvalidData("Invalid status message"));
+                }
+                unknown => {
+                    dbg!(unknown);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -647,6 +654,12 @@ impl Connection {
         server_obj_id: HexU32,
     ) -> Result<(), UbusError> {
         let new_request_sequence = self.generate_new_request_sequence();
+
+        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(4);
+        self.reply_receivers_tx
+            .lock()
+            .unwrap()
+            .insert(new_request_sequence.into(), reply_receiver_tx);
 
         self.send_message(UbusMsg {
             header: UbusMsgHeader {
@@ -662,11 +675,6 @@ impl Connection {
         })
         .await?;
 
-        let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
-        self.reply_receivers_tx
-            .lock()
-            .unwrap()
-            .insert(new_request_sequence.into(), reply_receiver_tx);
 
         /*
          * when server send a notify, it will receive:
@@ -920,7 +928,8 @@ impl Connection {
         let message_manager_receiver = async move {
             loop {
                 if let Ok(message) = UbusMsg::from_io(&mut io_reader).await {
-                    dbg!(&message);
+                    // dbg!(&message);
+                    log::trace!("got message: {:?}", &message);
                     match message {
                         UbusMsg {
                             header:

@@ -1,16 +1,20 @@
 use crate::*;
 
 use core::{f32::consts::E, ops::Not};
-use std::{collections::HashMap, dbg, format, println, string::ToString, sync::Arc, vec::Vec};
+use std::{
+    boxed::Box,
+    collections::HashMap,
+    dbg, format, println,
+    string::ToString,
+    sync::{Arc, Mutex},
+    vec::Vec,
+};
 extern crate alloc;
 use alloc::string::String;
 use serde_json::json;
 use std::vec;
 use storage_endian::BigEndian;
-use tokio::{
-    sync::{Mutex, mpsc},
-    task::JoinSet,
-};
+use tokio::{sync::mpsc, task::JoinSet};
 use ubuserror::*;
 
 #[derive(Copy, Clone)]
@@ -189,7 +193,7 @@ impl Connection {
         let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(4);
         self.reply_receivers_tx
             .lock()
-            .await
+            .unwrap()
             .insert(new_request_sequence.into(), reply_receiver_tx);
 
         // let now = std::time::Instant::now();
@@ -227,7 +231,7 @@ impl Connection {
                      */
                     self.reply_receivers_tx
                         .lock()
-                        .await
+                        .unwrap()
                         .remove(&new_request_sequence.into());
 
                     for blob in message.ubus_blobs {
@@ -327,7 +331,7 @@ impl Connection {
         let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
         self.reply_receivers_tx
             .lock()
-            .await
+            .unwrap()
             .insert(new_request_sequence.into(), reply_receiver_tx);
 
         self.send_message(UbusMsg {
@@ -367,7 +371,7 @@ impl Connection {
                     UbusCmdType::STATUS => {
                         self.reply_receivers_tx
                             .lock()
-                            .await
+                            .unwrap()
                             .remove(&new_request_sequence.into());
 
                         for blob in message.ubus_blobs {
@@ -456,7 +460,7 @@ impl Connection {
             let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
             self.reply_receivers_tx
                 .lock()
-                .await
+                .unwrap()
                 .insert(new_request_sequence.into(), reply_receiver_tx);
 
             self.send_message(UbusMsg {
@@ -495,7 +499,7 @@ impl Connection {
                     UbusCmdType::STATUS => {
                         self.reply_receivers_tx
                             .lock()
-                            .await
+                            .unwrap()
                             .remove(&new_request_sequence.into());
 
                         for blob in message.ubus_blobs {
@@ -532,7 +536,7 @@ impl Connection {
         let new_server_obj_id = new_server_obj.id;
         self.server_objs
             .lock()
-            .await
+            .unwrap()
             .insert(new_server_obj_id.into(), new_server_obj);
         Ok(new_server_obj_id.into())
     }
@@ -661,7 +665,7 @@ impl Connection {
         let (reply_receiver_tx, mut reply_receiver_rx) = mpsc::channel::<UbusMsg>(8);
         self.reply_receivers_tx
             .lock()
-            .await
+            .unwrap()
             .insert(new_request_sequence.into(), reply_receiver_tx);
 
         /*
@@ -791,21 +795,40 @@ impl Connection {
                             _ => None,
                         }
                     } {
+                        enum FindMethodStatus {
+                            Found(UbusMethod),
+                            ObjectNotFound,
+                            MethodNotFound,
+                        }
                         // tokio::runtime::Runtime::new().unwrap().block_on(async {});
 
                         /* reply to client */
 
-                        if let Some(server_obj) = server_objs
+                        /*
+                         * try to get the method from the HashMap, clone the method Arc, then drop the sync::Mutex
+                         * if we doesn't drop the Mutex,
+                         *      1. it can't be Send, compiler errors
+                         *      2. if the callback takes time, the callbacks HashMap is locked, and other callbacks can't get called
+                         */
+                        let find_method_result = if let Some(server_obj) = server_objs
                             .lock()
-                            .await
+                            .unwrap()
                             .get(&requested_server_obj_id.into())
                         {
                             match server_obj.methods.get(&method_name) {
-                                Some(method) => {
-                                    tokio::spawn(async {});
-                                    let reply_args = method(&req_args);
-                                    /* here client_obj_id == server objid */
-                                    message_sender_tx.send(UbusMsg{
+                                Some(method) => FindMethodStatus::Found(method.clone()),
+                                None => FindMethodStatus::MethodNotFound,
+                            }
+                        } else {
+                            FindMethodStatus::ObjectNotFound
+                        };
+
+                        match find_method_result {
+                            FindMethodStatus::Found(method) => {
+                                // tokio::spawn(async {});
+                                let reply_args = method(&req_args);
+                                /* here client_obj_id == server objid */
+                                message_sender_tx.send(UbusMsg{
                                         header: UbusMsgHeader {
                                             version: UbusMsgVersion::CURRENT,
                                             cmd_type: UbusCmdType::DATA,
@@ -818,62 +841,62 @@ impl Connection {
                                         ],
                                     }).await.unwrap();
 
-                                    // dbg!(reply_args);
+                                // dbg!(reply_args);
 
-                                    // sleep(Duration::from_millis(400));
+                                // sleep(Duration::from_millis(400));
 
-                                    message_sender_tx
-                                        .send(UbusMsg {
-                                            header: UbusMsgHeader {
-                                                version: UbusMsgVersion::CURRENT,
-                                                cmd_type: UbusCmdType::STATUS,
-                                                sequence: message.header.sequence,
-                                                peer: message.header.peer,
-                                            },
-                                            ubus_blobs: vec![
-                                                UbusBlob::ObjId(requested_server_obj_id),
-                                                UbusBlob::Status(UbusMsgStatus::OK),
-                                            ],
-                                        })
-                                        .await
-                                        .unwrap();
-                                }
-                                None => {
-                                    /* method not found */
-                                    message_sender_tx
-                                        .send(UbusMsg {
-                                            header: UbusMsgHeader {
-                                                version: UbusMsgVersion::CURRENT,
-                                                cmd_type: UbusCmdType::STATUS,
-                                                sequence: message.header.sequence,
-                                                peer: message.header.peer,
-                                            },
-                                            ubus_blobs: vec![
-                                                UbusBlob::ObjId(requested_server_obj_id),
-                                                UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
-                                            ],
-                                        })
-                                        .await
-                                        .unwrap();
-                                }
+                                message_sender_tx
+                                    .send(UbusMsg {
+                                        header: UbusMsgHeader {
+                                            version: UbusMsgVersion::CURRENT,
+                                            cmd_type: UbusCmdType::STATUS,
+                                            sequence: message.header.sequence,
+                                            peer: message.header.peer,
+                                        },
+                                        ubus_blobs: vec![
+                                            UbusBlob::ObjId(requested_server_obj_id),
+                                            UbusBlob::Status(UbusMsgStatus::OK),
+                                        ],
+                                    })
+                                    .await
+                                    .unwrap();
                             }
-                        } else {
-                            /* server obj not found */
-                            message_sender_tx
-                                .send(UbusMsg {
-                                    header: UbusMsgHeader {
-                                        version: UbusMsgVersion::CURRENT,
-                                        cmd_type: UbusCmdType::STATUS,
-                                        sequence: message.header.sequence,
-                                        peer: message.header.peer,
-                                    },
-                                    ubus_blobs: vec![
-                                        UbusBlob::ObjId(requested_server_obj_id),
-                                        UbusBlob::Status(UbusMsgStatus::NOT_FOUND),
-                                    ],
-                                })
-                                .await
-                                .unwrap();
+                            FindMethodStatus::MethodNotFound => {
+                                /* method not found */
+                                message_sender_tx
+                                    .send(UbusMsg {
+                                        header: UbusMsgHeader {
+                                            version: UbusMsgVersion::CURRENT,
+                                            cmd_type: UbusCmdType::STATUS,
+                                            sequence: message.header.sequence,
+                                            peer: message.header.peer,
+                                        },
+                                        ubus_blobs: vec![
+                                            UbusBlob::ObjId(requested_server_obj_id),
+                                            UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
+                                        ],
+                                    })
+                                    .await
+                                    .unwrap();
+                            }
+                            FindMethodStatus::ObjectNotFound => {
+                                /* server obj not found */
+                                message_sender_tx
+                                    .send(UbusMsg {
+                                        header: UbusMsgHeader {
+                                            version: UbusMsgVersion::CURRENT,
+                                            cmd_type: UbusCmdType::STATUS,
+                                            sequence: message.header.sequence,
+                                            peer: message.header.peer,
+                                        },
+                                        ubus_blobs: vec![
+                                            UbusBlob::ObjId(requested_server_obj_id),
+                                            UbusBlob::Status(UbusMsgStatus::NOT_FOUND),
+                                        ],
+                                    })
+                                    .await
+                                    .unwrap();
+                            }
                         }
                     };
                 }
@@ -967,13 +990,19 @@ impl Connection {
                                 },
                             ubus_blobs: _,
                         } => {
-                            if let Some(receiver) = reply_receivers_tx.lock().await.get(&seq.into())
+                            let receiver = if let Some(receiver) =
+                                reply_receivers_tx.lock().unwrap().get(&seq.into())
                             {
+                                Some(receiver.clone())
+                            } else {
+                                None
+                            };
+                            if let Some(receiver) = receiver {
                                 let _ = receiver.send(message).await.or_else(|e| {
                                         log::trace!("try to send to reply_receivers_rx[{}] but is dropped, rx may not care about messages any more", seq);
                                         Err(e)
                                     });
-                            }
+                            };
                         }
                     }
                 }

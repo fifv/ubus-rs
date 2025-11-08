@@ -18,7 +18,11 @@ async fn main() {
     let mut connection = match ubus::Connection::connect(&socket).await {
         Ok(connection) => connection,
         Err(err) => {
-            eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
+            log::error!(
+                "Failed to open ubus socket: {}  ({})",
+                socket.display(),
+                err
+            );
             return;
         }
     };
@@ -29,22 +33,16 @@ async fn main() {
     let server_obj1_id = connection
         .add_server(
             UbusServerObjectBuilder::new(obj_path)
-                .method("hi", Box::new(handle_hi))
-                .method(
-                    "hii",
-                    Box::new(|_req_args: &MsgTable| {
-                        MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
-                    }),
-                )
-                .method("echo", Box::new(|req_args: &MsgTable| req_args.to_owned()))
-                .method(
-                    "closure",
-                    Box::new(move |_req_args: &MsgTable| {
-                        json!({"captured-value":some_captured_value})
-                            .try_into()
-                            .unwrap()
-                    }),
-                ),
+                .method("hi", handle_hi)
+                .method("hii", |_req_args: &MsgTable| {
+                    MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
+                })
+                .method("echo", |req_args: &MsgTable| req_args.to_owned())
+                .method("closure", move |_req_args: &MsgTable| {
+                    json!({"captured-value":some_captured_value})
+                        .try_into()
+                        .unwrap()
+                }),
         )
         .await
         .unwrap();
@@ -56,10 +54,9 @@ async fn main() {
      *
      */
     let _ = UbusServerObjectBuilder::new("t2")
-        .method(
-            "hi",
-            Box::new(|_req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()),
-        )
+        .method("hi", |_req_args: &MsgTable| {
+            MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
+        })
         .register(&mut connection)
         .await
         .unwrap();

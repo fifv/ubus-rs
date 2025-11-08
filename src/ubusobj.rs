@@ -1,9 +1,12 @@
 extern crate alloc;
 use crate::*;
 use alloc::vec::Vec;
-use std::{boxed::Box, collections::HashMap, string::String};
+use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
-pub type UbusMethod = Box<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
+pub type UbusMethod = Arc<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
+// pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
+// impl<T> UbusMethodLike for T where T: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
+
 // #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 // pub struct Method {
 //     pub name: String,
@@ -39,8 +42,12 @@ impl UbusServerObjectBuilder {
             ..Default::default()
         }
     }
-    pub fn method(mut self, name: &str, callback: UbusMethod) -> Self {
-        self.methods.insert(name.into(), callback);
+    pub fn method<M: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static>(
+        mut self,
+        name: &str,
+        callback: M,
+    ) -> Self {
+        self.methods.insert(name.into(), Arc::new(callback));
         self
     }
     pub async fn register(self, conn: &mut Connection) -> Result<u32, UbusError> {

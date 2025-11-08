@@ -13,19 +13,15 @@ async fn main() {
     if args.len() > 1 {
         obj_path = args[1].as_str();
     }
-    let socket = Path::new("/var/run/ubus/ubus.sock");
 
-    let mut connection = match ubus::Connection::connect(&socket).await {
-        Ok(connection) => connection,
-        Err(err) => {
-            log::error!(
-                "Failed to open ubus socket: {}  ({})",
-                socket.display(),
-                err
-            );
-            return;
-        }
-    };
+    let mut connection = ubus::Connection::connect_ubusd()
+        .await
+        .map_err(|err| {
+            log::error!("Failed to open ubus socket  ({})", err);
+            err
+        })
+        .unwrap();
+
     fn handle_hi(_req_args: &MsgTable) -> MsgTable {
         MsgTable::try_from(r#"{"haha": true}"#).unwrap()
     }
@@ -73,9 +69,8 @@ async fn main() {
             .await
             .unwrap();
         // sleep(Duration::from_millis(1000)).await;
-        // sleep(Duration::from_millis(3000)).await;
+        sleep(Duration::from_millis(3000)).await;
     }
-
 
     log::error!("?");
     /* this do nothing, same as sleep(Forever) */

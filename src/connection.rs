@@ -4,7 +4,7 @@ use core::{f32::consts::E, ops::Not};
 use std::{
     boxed::Box,
     collections::HashMap,
-    dbg, format, println,
+    dbg, format,
     string::ToString,
     sync::{Arc, Mutex},
     vec::Vec,
@@ -183,6 +183,27 @@ impl Connection {
             .map_err(|_| UbusError::UnexpectChannelClosed())
     }
 
+    /**
+     * call server with path + method + args
+     *
+     * same as `.lookup()` + `.invoke()`
+     */
+    pub async fn call(
+        &mut self,
+        server_obj_path: &str,
+        method: &str,
+        req_args: MsgTable,
+    ) -> Result<MsgTable, UbusError> {
+        let server_obj_id = self.lookup_id(server_obj_path).await?;
+        self.invoke(server_obj_id, method, req_args).await
+    }
+
+    /**
+     * call server with id + method + args
+     *
+     * `.invoke()` need a server_obj_id, which can be queried from `.lookup()`
+     * if you don't need the id, just call `.call()`
+     */
     pub async fn invoke(
         &mut self,
         server_obj_id: HexU32,
@@ -270,45 +291,6 @@ impl Connection {
                 }
             }
         }
-    }
-
-    pub async fn call<'a>(
-        &'a mut self,
-        obj_path: &'a str,
-        method: &'a str,
-        req_args: &'a str,
-    ) -> Result<String, UbusError> {
-        // let obj_json = self.lookup_object_json(obj_path)?;
-        // // dbg!(&obj_json);
-        // let obj: UbusObject = serde_json::from_str(&obj_json)?;
-        // dbg!(&obj);
-        // let req_args = obj.args_from_json(method, args).expect("not valid json");
-        let obj_id = self.lookup_id(obj_path).await?;
-        let req_args = MsgTable::try_from(req_args)?;
-        // dbg!(&args, &req_args);
-        let reply_args = self.invoke(obj_id, method, req_args).await?;
-
-        Ok(dbg!(reply_args.try_into()?))
-
-        // dbg!(&bi);
-
-        // let json = {
-        //     let mut json = String::new();
-        //     json += "{\n";
-        //     let mut first = true;
-        //     for msg in reply_args.0 {
-        //         // dbg!(&msg);
-        //         if !first {
-        //             json += ",\n";
-        //         }
-        //         //json_str += &format!("{:?}", x);
-        //         json += &format!("\t{}", msg);
-        //         first = false;
-        //     }
-        //     json += "\n}";
-        //     json
-        // };
-        // Ok(json)
     }
 
     // pub fn lookup_object_json<'a>(&'a mut self, obj_path: &'a str) -> Result<String, UbusError> {
@@ -591,7 +573,6 @@ impl Connection {
          * I register the receiver, and it doesn't find a receiver, just drop the message
          */
 
-
         // println!("3");
 
         /*
@@ -674,7 +655,6 @@ impl Connection {
             ],
         })
         .await?;
-
 
         /*
          * when server send a notify, it will receive:
@@ -956,7 +936,7 @@ impl Connection {
                                 },
                             ubus_blobs: _,
                         } => {
-                            println!(
+                            log::trace!(
                                 "new connection to ubus got HELLO! my client_id is {:08x}",
                                 message.header.peer
                             );

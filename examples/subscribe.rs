@@ -6,17 +6,16 @@ use ubus::{MsgTable, UbusServerObjectBuilder};
 
 #[tokio::main]
 async fn main() {
+    /* enable debug logger */
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
 
-    let socket = Path::new("/var/run/ubus/ubus.sock");
-
-    let mut connection = match ubus::Connection::connect(&socket).await {
-        Ok(connection) => connection,
-        Err(err) => {
-            eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
-            return;
-        }
-    };
+    let mut connection = ubus::Connection::connect_ubusd()
+        .await
+        .map_err(|err| {
+            log::error!("Failed to open ubus socket  ({})", err);
+            err
+        })
+        .unwrap();
 
     let some_captured_value = 1;
     let server_obj1_id = connection

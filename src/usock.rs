@@ -31,6 +31,9 @@ impl Connection {
         )
         .await
     }
+    pub async fn connect_ubusd() -> Result<Self, UbusError> {
+        Self::connect(Path::new("/var/run/ubus/ubus.sock")).await
+    }
 }
 
 impl IOError for std::io::Error {}

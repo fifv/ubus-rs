@@ -1,74 +1,45 @@
 use std::path::Path;
 
+use serde_json::json;
 use ubus::MsgTable;
 
 #[tokio::main]
 async fn main() {
-    let _obj_path = "test";
-    let _method = "echo";
-    let _req_args = r#"{"name":"eth0"}"#;
+    /* enable debug logger */
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
 
-    let obj_path = "ttt";
-    let method = "echo";
-    let req_args = r#"{"id":1,"msg":"a41234123"}"#;
-
-    let socket = Path::new("/var/run/ubus/ubus.sock");
-
-    let mut connection = ubus::Connection::connect(&socket)
+    /* -1- connect to ubusd */
+    let mut connection = ubus::Connection::connect_ubusd()
         .await
         .map_err(|err| {
-            eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
+            log::error!("Failed to open ubus socket  ({})", err);
             err
         })
         .unwrap();
-    let objs = connection.lookup(obj_path).await.unwrap();
-    let obj = objs.get(0).unwrap();
-    dbg!("{}", &obj);
-    // let obj: UbusObject = serde_json::from_str(&obj).unwrap();
-    let req_args = MsgTable::try_from(req_args).unwrap();
-    // let now = std::time::Instant::now();
-    let _reply_args = connection.invoke(obj.id, method, req_args).await.unwrap();
-    // println!("Elapsed: {:.2?}", now.elapsed());
-    let _reply_args = connection
-        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
-        .await
-        .unwrap();
-    let _reply_args = connection
-        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
-        .await
-        .unwrap();
-    let _reply_args = connection
-        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
-        .await
-        .unwrap();
-    let reply_args = connection
-        .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
-        .await
-        .unwrap();
-    println!("{}", String::try_from(reply_args).unwrap());
-    // loop {
-    //     let reply_args = connection
-    //         .invoke(obj.id, method, r#"{"1": true}"#.try_into().unwrap())
-    //         .await
-    //         .unwrap();
-    // }
 
-    // Value::from(bi);
-    // let json_str = {
-    //     let mut json_str = String::new();
-    //     json_str = "{\n".to_string();
-    //     let mut first = true;
-    //     for x in reply_args.0 {
-    //         if !first {
-    //             json_str += ",\n";
-    //         }
-    //         //json_str += &format!("{:?}", x);
-    //         let msg: BlobMsg = x.try_into().unwrap();
-    //         json_str += &format!("{}", msg);
-    //         first = false;
-    //     }
-    //     json_str += "\n}";
-    //     json_str
-    // };
-    // println!("{}", json_str);
+    /* -2- use the obj_path to lookup for obj_id. there is a `.call()` which does lookup for you */
+    let server_obj_id = connection.lookup_id("ttt").await.unwrap();
+
+    /* -3- invoke with found server_obj_id, method name, and json args */
+    let reply_args = connection
+        .invoke(
+            server_obj_id,
+            "echo",
+            json!({"some": "value"}).try_into().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    /* -3- you can also use json string as args */
+    let reply_args = connection
+        .invoke(
+            server_obj_id,
+            "echo",
+            r#"{"id":1,"msg":"a41234123"}"#.try_into().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    /* -4- use the response, or ignore it */
+    println!("{}", reply_args.to_string_pretty().unwrap());
 }

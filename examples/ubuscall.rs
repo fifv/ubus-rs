@@ -4,6 +4,9 @@ use std::path::Path;
 
 #[tokio::main]
 async fn main() {
+    /* enable debug logger */
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
+
     let args: Vec<String> = env::args().collect();
     let mut obj_path = "";
     let mut method = "";
@@ -19,23 +22,20 @@ async fn main() {
         data = &args[3];
     }
 
-    // dbg!(&data);
+    let mut connection = ubus::Connection::connect_ubusd()
+        .await
+        .map_err(|err| {
+            log::error!("Failed to open ubus socket  ({})", err);
+            err
+        })
+        .unwrap();
 
-    let socket = Path::new("/var/run/ubus/ubus.sock");
-
-    let mut connection = match ubus::Connection::connect(&socket).await {
-        Ok(connection) => connection,
-        Err(err) => {
-            eprintln!("{}: Failed to open ubus socket. {}", socket.display(), err);
-            return;
-        }
-    };
-    match connection.call(obj_path, method, data).await {
+    match connection
+        .call(obj_path, method, data.try_into().unwrap())
+        .await
+    {
         Ok(json) => {
-            // println!("{}", json);
-            let parsed: Value = serde_json::from_str(&json).unwrap();
-            let pretty_json = to_string_pretty(&parsed).unwrap();
-            println!("{}", pretty_json);
+            println!("{}", json.to_string_pretty().unwrap());
         }
         Err(e) => {
             eprintln!("Failed to call, with error: {}", e);

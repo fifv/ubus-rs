@@ -6,12 +6,10 @@ async fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
 
     let args: Vec<String> = env::args().collect();
-    let mut obj_path = "";
-    if args.len() > 1 {
-        obj_path = args[1].as_str();
-    }
+    let obj_path = if args.len() > 1 { args[1].as_str() } else { "" };
 
-    let mut connection = ubus::Connection::connect_ubusd()
+
+    let connection = ubus::Connection::connect_ubusd()
         .await
         .map_err(|err| {
             log::error!("Failed to open ubus socket  ({})", err);

@@ -9,7 +9,7 @@ async fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
 
     /* -1- connect to ubusd */
-    let mut connection = ubus::Connection::connect_ubusd()
+    let connection = ubus::Connection::connect_ubusd()
         .await
         .map_err(|err| {
             log::error!("Failed to open ubus socket  ({})", err);

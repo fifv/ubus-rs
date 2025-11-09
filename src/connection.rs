@@ -51,8 +51,10 @@ pub struct Connection {
      * in client mode,
      *      each request need a sequence to identify from other requests
      *      different client_obj (i.e. new connection) has different client_obj_id so it's okay to use same sequence
+     *
+     * wrapped in arc so reference doesn't need to be mut
      */
-    sequence: u16,
+    sequence: Arc<Mutex<u16>>,
     /*
      * not used, we use a heap allocated Vec to store received data
      */
@@ -96,7 +98,7 @@ impl Connection {
 
         let mut conn = Self {
             // peer: 0,
-            sequence: 0,
+            sequence: Arc::new(Mutex::new(0)),
             // buffer: [0u8; 64 * 1024],
             server_objs: Arc::new(Mutex::new(HashMap::new())),
             reply_receivers_tx: Arc::new(Mutex::new(HashMap::new())),
@@ -117,7 +119,7 @@ impl Connection {
         // conn.invoke_handler = Some(Box::new(invoke_handler));
         // conn.message_manager = Some(Box::new(message_manager));
         conn.communication_loops.spawn(Self::run_invoke_handler(
-            conn.server_objs.clone(),
+            conn.server_objs.clone(), /* clone the Arc */
             invoke_receiver_rx,
             message_sender_tx,
         ));
@@ -181,7 +183,7 @@ impl Connection {
      * same as `.lookup()` + `.invoke()`
      */
     pub async fn call(
-        &mut self,
+        &self,
         server_obj_path: &str,
         method: &str,
         req_args: MsgTable,
@@ -197,7 +199,7 @@ impl Connection {
      * if you don't need the id, just call `.call()`
      */
     pub async fn invoke(
-        &mut self,
+        &self,
         server_obj_id: HexU32,
         method: &str,
         req_args: MsgTable,
@@ -239,7 +241,7 @@ impl Connection {
     //         .map_err(|e| UbusError::InvalidData("Failed to stringify"))
     // }
 
-    pub async fn lookup_id(&mut self, obj_path: &str) -> Result<HexU32, UbusError> {
+    pub async fn lookup_id(&self, obj_path: &str) -> Result<HexU32, UbusError> {
         Ok(self
             .lookup(obj_path)
             .await?
@@ -249,7 +251,7 @@ impl Connection {
             .into())
     }
 
-    pub async fn lookup(&mut self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
+    pub async fn lookup(&self, obj_path: &str) -> Result<Vec<UbusObject>, UbusError> {
         let reply = self
             .send_message_and_handle_reply(
                 UbusCmdType::LOOKUP,
@@ -305,7 +307,7 @@ impl Connection {
      * reply:   data:   {"objid":2013531835,"data":{"message":"test received a message: fsdfsdf"}}
      * reply:   status: {"status":0,"objid":2013531835}
      *
-     * FIXME: the read loop conflict with client read response after invoke
+     * FIXME\: the read loop conflict with client read response after invoke
      *
      */
 
@@ -313,9 +315,9 @@ impl Connection {
     Regsister a server object with obj_path, method_name and method_callbacks
       use a `UbusServerObjectBuilder` to build them
 
-      the callback is wrapped in Box to support closure capture
+      the callback is auto wrapped in Arc to support closure capture
 
-    TODO: currently a `listening()` call is need to listen future requests, maybe I should find a better way
+    TODO\: currently a `listening()` call is need to listen future requests, maybe I should find a better way
 
 
       ### Example
@@ -323,14 +325,18 @@ impl Connection {
       let _ = connection
         .add_server(UbusServerObjectBuilder::new("t2").method(
             "hi",
-            Box::new(|req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()),
+            req_args: |&MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap(),
         ))
         .await
         .unwrap();
       ```
+
+      ### Note
+        Currently, if call `add_server` multiple times with same obj_path, ubusd will use latest one, and all objects' callbacks stored here, but only the latest objects'
+        will be called by ubus, so memory leak happens
     */
     pub async fn add_server(
-        &mut self,
+        &self,
         server_obj_builder: UbusServerObjectBuilder,
     ) -> Result<u32, UbusError> {
         // FIXME\: official ubus cli call stuck while data in monitor looks good <- fixed: replied seq should be same as requested
@@ -394,7 +400,7 @@ impl Connection {
      *  ### When server notify
      */
     pub async fn notify(
-        &mut self,
+        &self,
         server_obj_id: u32,
         method: &str,
         data: MsgTable,
@@ -439,7 +445,7 @@ impl Connection {
     }
 
     pub async fn subscribe(
-        &mut self,
+        &self,
         listener_obj_id: HexU32,
         server_obj_id: HexU32,
     ) -> Result<(), UbusError> {
@@ -467,11 +473,16 @@ impl Connection {
     /**
      * sequence is used to identify session, only client need to generate it, server should reply with same sequence with request's
      */
-    fn generate_new_request_sequence(&mut self) -> BigEndian<u16> {
-        self.sequence = self.sequence.wrapping_add(1);
-        BigEndian::<u16>::from(self.sequence)
+    fn generate_new_request_sequence(&self) -> BigEndian<u16> {
+        // self.sequence = self.sequence.wrapping_add(1);
+        // BigEndian::<u16>::from(self.sequence)
+
         /* also seems okay to use random number */
         // BigEndian::<u16>::from(random::<u16>(..))
+
+        let mut seq = self.sequence.lock().unwrap();
+        *seq = seq.wrapping_add(1);
+        BigEndian::<u16>::from(*seq)
     }
 
     /**
@@ -494,150 +505,188 @@ impl Connection {
                 .await
                 .ok_or(UbusError::UnexpectChannelClosed())?;
 
-            /*
-             * server object normally won't got a status, instead, server will send back a status OK to terminate client
-             */
-            if let UbusCmdType::INVOKE = message.header.cmd_type {
-                /*
-                 * client's INVOKE contains:
-                 *      - `message.header.peer`         : the client's obj_id, should be used as `message.header.peer` when reply
-                 *      - `message.header.sequence`     : used to identify current session, should be used as `message.header.sequence` when reply
-                 *      - `message.ubus_blobs.?.ObjId`  : current server obj_id, should be used as `message.ubus_blobs.?.ObjId` when reply.
-                 *                                        this is same as the response from add_server
-                 *      - `message.ubus_blobs.?.Method` : client want to call this method
-                 *      - `message.ubus_blobs.?.Data`   : client requested with this json
-                 */
-                // TODO: use Option
-                if let Some((requested_server_obj_id, method_name, req_args)) = {
-                    let mut requested_server_obj_id = None;
-                    let mut method_name = None;
-                    let mut req_args = None;
-                    for blob in message.ubus_blobs {
-                        // dbg!(&blob);
-                        match blob {
-                            UbusBlob::ObjId(id) => requested_server_obj_id = Some(id),
-                            UbusBlob::Method(method) => method_name = Some(method),
-                            UbusBlob::Data(msg_table) => req_args = Some(msg_table),
-                            _ => {}
-                        }
-                    }
-                    match (requested_server_obj_id, method_name, req_args) {
-                        (Some(requested_server_obj_id), Some(method_name), Some(req_args)) => {
-                            Some((requested_server_obj_id, method_name, req_args))
-                        }
-                        _ => None,
-                    }
-                } {
-                    enum FindMethodStatus {
-                        Found(UbusMethod),
-                        ObjectNotFound,
-                        MethodNotFound,
-                    }
-                    // tokio::runtime::Runtime::new().unwrap().block_on(async {});
-
-                    /* reply to client */
-
-                    /*
-                     * try to get the method from the HashMap, clone the method Arc, then drop the sync::Mutex
-                     * if we doesn't drop the Mutex,
-                     *      1. it can't be Send, compiler errors
-                     *      2. if the callback takes time, the callbacks HashMap is locked, and other callbacks can't get called
-                     */
-                    let find_method_result = if let Some(server_obj) = server_objs
-                        .lock()
-                        .unwrap()
-                        .get(&requested_server_obj_id.into())
-                    {
-                        match server_obj.methods.get(&method_name) {
-                            Some(method) => FindMethodStatus::Found(method.clone()),
-                            None => FindMethodStatus::MethodNotFound,
-                        }
-                    } else {
-                        FindMethodStatus::ObjectNotFound
-                    };
-
-                    match find_method_result {
-                        FindMethodStatus::Found(method) => {
-                            // tokio::spawn(async {});
-                            let reply_args = method(&req_args);
-                            /* here client_obj_id == server objid */
-                            message_sender_tx.send(UbusMsg{
-                                        header: UbusMsgHeader {
-                                            version: UbusMsgVersion::CURRENT,
-                                            cmd_type: UbusCmdType::DATA,
-                                            sequence: message.header.sequence,
-                                            peer: message.header.peer,
-                                        },
-                                        ubus_blobs: vec![
-                                            UbusBlob::ObjId(requested_server_obj_id),
-                                            UbusBlob::Data(reply_args),/* data is moved to enum, then moved to UbusMsg */
-                                        ],
-                                    }).await.unwrap();
-
-                            // dbg!(reply_args);
-
-                            // sleep(Duration::from_millis(400));
-
-                            message_sender_tx
-                                .send(UbusMsg {
-                                    header: UbusMsgHeader {
-                                        version: UbusMsgVersion::CURRENT,
-                                        cmd_type: UbusCmdType::STATUS,
-                                        sequence: message.header.sequence,
-                                        peer: message.header.peer,
-                                    },
-                                    ubus_blobs: vec![
-                                        UbusBlob::ObjId(requested_server_obj_id),
-                                        UbusBlob::Status(UbusMsgStatus::OK),
-                                    ],
-                                })
-                                .await
-                                .unwrap();
-                        }
-                        FindMethodStatus::MethodNotFound => {
-                            /* method not found */
-                            message_sender_tx
-                                .send(UbusMsg {
-                                    header: UbusMsgHeader {
-                                        version: UbusMsgVersion::CURRENT,
-                                        cmd_type: UbusCmdType::STATUS,
-                                        sequence: message.header.sequence,
-                                        peer: message.header.peer,
-                                    },
-                                    ubus_blobs: vec![
-                                        UbusBlob::ObjId(requested_server_obj_id),
-                                        UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
-                                    ],
-                                })
-                                .await
-                                .unwrap();
-                        }
-                        FindMethodStatus::ObjectNotFound => {
-                            /* server obj not found */
-                            message_sender_tx
-                                .send(UbusMsg {
-                                    header: UbusMsgHeader {
-                                        version: UbusMsgVersion::CURRENT,
-                                        cmd_type: UbusCmdType::STATUS,
-                                        sequence: message.header.sequence,
-                                        peer: message.header.peer,
-                                    },
-                                    ubus_blobs: vec![
-                                        UbusBlob::ObjId(requested_server_obj_id),
-                                        UbusBlob::Status(UbusMsgStatus::NOT_FOUND),
-                                    ],
-                                })
-                                .await
-                                .unwrap();
-                        }
-                    }
-                };
-            } else {
+            /* only INVOKE should reach here, is this syntax more readable than if let? */
+            let UbusCmdType::INVOKE = message.header.cmd_type else {
                 log::warn!(
                     "invoke_handler got a non-INVOKE message {:?}, which is not expected",
                     &message
                 );
+                continue;
+            };
+
+            /*
+             * server object normally won't got a status, instead, server will send back a status OK to terminate client
+             */
+            /*
+             * client's INVOKE contains:
+             *      - `message.header.peer`         : the client's obj_id, should be used as `message.header.peer` when reply
+             *      - `message.header.sequence`     : used to identify current session, should be used as `message.header.sequence` when reply
+             *      - `message.ubus_blobs.?.ObjId`  : current server obj_id, should be used as `message.ubus_blobs.?.ObjId` when reply.
+             *                                        this is same as the response from add_server
+             *      - `message.ubus_blobs.?.Method` : client want to call this method
+             *      - `message.ubus_blobs.?.Data`   : client requested with this json
+             */
+            // TODO: use Option
+            let Some((requested_server_obj_id, method_name, req_args)) = ({
+                let mut requested_server_obj_id = None;
+                let mut method_name = None;
+                let mut req_args = None;
+                for blob in message.ubus_blobs {
+                    // dbg!(&blob);
+                    match blob {
+                        UbusBlob::ObjId(id) => requested_server_obj_id = Some(id),
+                        UbusBlob::Method(method) => method_name = Some(method),
+                        UbusBlob::Data(msg_table) => req_args = Some(msg_table),
+                        _ => {}
+                    }
+                }
+                match (requested_server_obj_id, method_name, req_args) {
+                    (Some(requested_server_obj_id), Some(method_name), Some(req_args)) => {
+                        Some((requested_server_obj_id, method_name, req_args))
+                    }
+                    _ => None,
+                }
+            }) else {
+                log::warn!(
+                    "invoke_handler can't get obj_id, method_name, and req_args from INVOKE"
+                );
+                continue;
+            };
+
+
+            enum FindMethodStatus {
+                Found(UbusMethod),
+                ObjectNotFound,
+                MethodNotFound,
             }
+            // tokio::runtime::Runtime::new().unwrap().block_on(async {});
+
+            /* reply to client */
+
+            /*
+             * try to get the method from the HashMap, clone the method Arc, then drop the sync::Mutex
+             * if we doesn't drop the Mutex,
+             *      1. it can't be Send, compiler errors
+             *      2. if the callback takes time, the callbacks HashMap is locked, and other callbacks can't get called
+             */
+            let find_method_result = if let Some(server_obj) = server_objs
+                .lock()
+                .unwrap()
+                .get(&requested_server_obj_id.into())
+            {
+                match server_obj.methods.get(&method_name) {
+                    Some(method) => FindMethodStatus::Found(method.clone()),
+                    None => FindMethodStatus::MethodNotFound,
+                }
+            } else {
+                FindMethodStatus::ObjectNotFound
+            };
+
+            /* use a dedicated task to run the callback */
+            // FIXME\: the unwrap may panic
+            let message_sender_tx = message_sender_tx.clone();
+            tokio::spawn(async move {
+                match find_method_result {
+                    FindMethodStatus::Found(method) => {
+                        // tokio::spawn(async {});
+                        let reply_args = method(&req_args);
+                        /* here client_obj_id == server objid */
+                        message_sender_tx
+                            .send(UbusMsg {
+                                header: UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::DATA,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                ubus_blobs: vec![
+                                    UbusBlob::ObjId(requested_server_obj_id),
+                                    /* data is moved to enum, then moved to UbusMsg */
+                                    UbusBlob::Data(reply_args),
+                                ],
+                            })
+                            .await
+                            .inspect_err(|_| {
+                                log::warn!(
+                                    /* idk why but too long cause fmt broken */
+                                    "failed to send reply because the message_receiver is down"
+                                )
+                            })
+                            .ok();
+
+                        // dbg!(reply_args);
+
+                        // sleep(Duration::from_millis(400));
+
+                        message_sender_tx
+                            .send(UbusMsg {
+                                header: UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::STATUS,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                ubus_blobs: vec![
+                                    UbusBlob::ObjId(requested_server_obj_id),
+                                    UbusBlob::Status(UbusMsgStatus::OK),
+                                ],
+                            })
+                            .await
+                            .inspect_err(|_| {
+                                log::warn!(
+                                    "failed to send reply because the message receiver is down"
+                                )
+                            })
+                            .ok();
+                    }
+                    FindMethodStatus::MethodNotFound => {
+                        /* method not found */
+                        message_sender_tx
+                            .send(UbusMsg {
+                                header: UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::STATUS,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                ubus_blobs: vec![
+                                    UbusBlob::ObjId(requested_server_obj_id),
+                                    UbusBlob::Status(UbusMsgStatus::METHOD_NOT_FOUND),
+                                ],
+                            })
+                            .await
+                            .inspect_err(|_| {
+                                log::warn!(
+                                    "failed to send reply because the message_receiver is down"
+                                )
+                            })
+                            .ok();
+                    }
+                    FindMethodStatus::ObjectNotFound => {
+                        /* server obj not found */
+                        message_sender_tx
+                            .send(UbusMsg {
+                                header: UbusMsgHeader {
+                                    version: UbusMsgVersion::CURRENT,
+                                    cmd_type: UbusCmdType::STATUS,
+                                    sequence: message.header.sequence,
+                                    peer: message.header.peer,
+                                },
+                                ubus_blobs: vec![
+                                    UbusBlob::ObjId(requested_server_obj_id),
+                                    UbusBlob::Status(UbusMsgStatus::NOT_FOUND),
+                                ],
+                            })
+                            .await
+                            .inspect_err(|_| {
+                                log::warn!(
+                                    "failed to send reply because the message_receiver is down"
+                                )
+                            })
+                            .ok();
+                    }
+                }
+            });
         }
     }
 
@@ -735,7 +784,7 @@ impl Connection {
         message_manager_sender
     }
     async fn send_message_and_handle_reply(
-        &mut self,
+        &self,
         request_cmd_type: UbusCmdType,
         request_peer: HexU32,
         request_blobs: Vec<UbusBlob>,
@@ -760,43 +809,45 @@ impl Connection {
 
         let mut data_blobs = Vec::with_capacity(2);
         let status = 'messages: loop {
-            let message = reply_receiver_rx.recv().await.unwrap();
+            if let Some(message) = reply_receiver_rx.recv().await {
+                match message.header.cmd_type {
+                    UbusCmdType::STATUS => {
+                        /*
+                         * remove the channel to save memory, e.g. channel(8) x 65535 consume ~100MB
+                         */
+                        self.reply_receivers_tx
+                            .lock()
+                            .unwrap()
+                            .remove(&new_request_sequence.into());
 
-            match message.header.cmd_type {
-                UbusCmdType::STATUS => {
-                    /*
-                     * remove the channel to save memory, e.g. channel(8) x 65535 consume ~100MB
-                     */
-                    self.reply_receivers_tx
-                        .lock()
-                        .unwrap()
-                        .remove(&new_request_sequence.into());
-
-                    for blob in message.ubus_blobs {
-                        match blob {
-                            UbusBlob::Status(UbusMsgStatus::OK) => {
-                                break 'messages Ok(());
+                        for blob in message.ubus_blobs {
+                            match blob {
+                                UbusBlob::Status(UbusMsgStatus::OK) => {
+                                    break 'messages Ok(());
+                                }
+                                UbusBlob::Status(status) => {
+                                    break 'messages Err(UbusError::Status(status));
+                                }
+                                /* when NOTIFY, the response by ubusd doesn't contain a Status... wtf */
+                                _ => break 'messages Ok(()),
                             }
-                            UbusBlob::Status(status) => {
-                                break 'messages Err(UbusError::Status(status));
-                            }
-                            /* when NOTIFY, the response by ubusd doesn't contain a Status... wtf */
-                            _ => break 'messages Ok(()),
                         }
+                        // break 'messages Err(UbusError::InvalidData("Invalid status message"));
                     }
-                    // break 'messages Err(UbusError::InvalidData("Invalid status message"));
+                    UbusCmdType::DATA => {
+                        data_blobs.push(message.ubus_blobs);
+                        // break 'messages Err(UbusError::InvalidData("Invalid data message"));
+                    }
+                    _ => {
+                        log::warn!(
+                            "receive a message which doesn't know how to handle: {:?}",
+                            &message
+                        );
+                    }
                 }
-                UbusCmdType::DATA => {
-                    data_blobs.push(message.ubus_blobs);
-                    // break 'messages Err(UbusError::InvalidData("Invalid data message"));
-                }
-                _ => {
-                    log::warn!(
-                        "receive a message which doesn't know how to handle: {:?}",
-                        &message
-                    );
-                }
-            }
+            } else {
+                log::warn!("the reply_receiver_tx disappears?! this shouldn't happen!")
+            };
         };
         match status {
             Ok(_) => Ok(data_blobs),

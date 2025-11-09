@@ -1,7 +1,10 @@
 use std::{env, path::Path, time::Duration};
 
 use serde_json::json;
-use tokio::time::sleep;
+use tokio::{
+    sync::mpsc,
+    time::{self, sleep},
+};
 use ubus::{MsgTable, UbusServerObjectBuilder};
 
 #[tokio::main]
@@ -22,6 +25,7 @@ async fn main() {
         MsgTable::try_from(r#"{"haha": true}"#).unwrap()
     }
     /* closure can capture */
+    let some_closure = |_req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap();
     let some_captured_value = 1;
     /*
      * add a server object with some methods, closure with capture is okay
@@ -31,11 +35,13 @@ async fn main() {
             UbusServerObjectBuilder::new("ttt")
                 /* a normal function */
                 .method("hi", handle_hi)
-                /* a closure */
+                /* a closure variable */
+                .method("hiii", some_closure)
+                /* an inline closure */
                 .method("hii", |_req_args: &MsgTable| {
                     MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
                 })
-                /* echo request args */
+                /* an inline closure, echo request args */
                 .method("echo", |req_args: &MsgTable| req_args.to_owned())
                 /* a closure with capture */
                 .method("closure", move |_req_args: &MsgTable| {
@@ -62,19 +68,31 @@ async fn main() {
         .unwrap();
 
     /* let's notify subscribers. */
-    for i in 0.. {
-        connection
-            .notify(
-                server_obj1_id,
-                "click",
-                json!({"event": "left-click", "count": i})
-                    .try_into()
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        // sleep(Duration::from_millis(1000)).await;
-        sleep(Duration::from_millis(3000)).await;
+
+    /*
+     * you may need to call notify in spawned tasks, which is not easy because the connection can't be cloned
+     * one option is wrapping the connection with Arc then clone and move
+     * another options is use channel, move tx into tasks and use a loop to receive rx and call notify()
+     */
+    let (tx, mut rx) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let mut int = time::interval(Duration::from_millis(1000));
+        for i in 0.. {
+            int.tick().await;
+
+            let _ = tx.send(json!({"event": "left-click", "count": i})).await;
+            // sleep(Duration::from_millis(1000)).await;
+        }
+    });
+
+    loop {
+        let data = rx.recv().await;
+        if let Some(data) = data {
+            connection
+                .notify(server_obj1_id, "click", data.try_into().unwrap())
+                .await
+                .unwrap();
+        }
     }
 
     /* this does nothing, same as sleep(Forever), prevent connection being dropped */

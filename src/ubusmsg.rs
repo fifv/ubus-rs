@@ -152,7 +152,7 @@ impl From<UbusMsg> for Vec<u8> {
             BlobTag::SIZE + ubusmsg_blobs_buffer.len(),
             false,
         )
-        .expect("???")
+        .expect("only failed if len passed to BlobTag::try_build is too large")
         .to_bytes();
 
         let mut raw_msg_data = Vec::new();

@@ -1,7 +1,7 @@
 extern crate alloc;
 use crate::*;
 use alloc::vec::Vec;
-use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
+use std::{collections::HashMap, string::String, sync::Arc};
 
 pub type UbusMethod = Arc<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}

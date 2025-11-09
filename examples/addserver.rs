@@ -1,5 +1,6 @@
 use std::{env, path::Path, time::Duration};
 
+use log::trace;
 use serde_json::json;
 use tokio::{
     sync::mpsc,
@@ -86,15 +87,20 @@ async fn main() {
     });
 
     loop {
-        let data = rx.recv().await;
-        if let Some(data) = data {
+        if let Some(data) = rx.recv().await {
             connection
                 .notify(server_obj1_id, "click", data.try_into().unwrap())
                 .await
                 .unwrap();
+        } else {
+            break;
         }
     }
 
+    // trace!("1");
+    // drop(connection);
     /* this does nothing, same as sleep(Forever), prevent connection being dropped */
     connection.run().await;
+    // trace!("2");
+    sleep(Duration::MAX).await;
 }

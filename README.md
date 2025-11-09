@@ -26,11 +26,13 @@ Supported
 * High level abstraction for `subscribe` / `notify` commands
 * Async with Tokio
 * JSON support
+* Strongly typed result
 
 TODO
 ----
 
 * `unsubscribe` / `remove_server`
+* handle IO/channel errors better instead of panic
 
 
 

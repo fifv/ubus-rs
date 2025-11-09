@@ -97,7 +97,7 @@ async fn main() {
         }
     }
 
-    // trace!("1");
+    trace!("1");
     // drop(connection);
     /* this does nothing, same as sleep(Forever), prevent connection being dropped */
     connection.run().await;

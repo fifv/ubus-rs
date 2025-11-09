@@ -1,13 +1,7 @@
 use crate::*;
 
 use core::{ops::Not, sync::atomic::AtomicU16};
-use std::{
-    collections::HashMap,
-    format,
-    string::ToString,
-    sync::Arc,
-    vec::Vec,
-};
+use std::{collections::HashMap, format, string::ToString, sync::Arc, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
 use std::vec;
@@ -73,7 +67,7 @@ pub struct Connection {
     /**
      * should each server has its own channel?
      */
-    invoke_receiver_tx: mpsc::Sender<UbusMsg>,
+    // invoke_receiver_tx: mpsc::Sender<UbusMsg>,
     // invoke_receiver_rx: mpsc::Receiver<UbusMsg>,
     /**
      * send message to MessageManager and let it send to wire
@@ -104,7 +98,7 @@ impl Connection {
             // buffer: [0u8; 64 * 1024],
             server_objs: Arc::new(RwLock::new(HashMap::new())),
             reply_receivers_tx: Arc::new(RwLock::new(HashMap::new())),
-            invoke_receiver_tx: invoke_receiver_tx.clone(),
+            // invoke_receiver_tx: invoke_receiver_tx.clone(),
             message_sender_tx: message_sender_tx.clone(),
             // invoke_handler: None,
             // message_manager: None,
@@ -176,6 +170,7 @@ impl Connection {
         self.message_sender_tx
             .send(message)
             .await
+            .inspect_err(|_| log::warn!("failed to send because message_sender crashed!"))
             .map_err(|_| UbusError::UnexpectChannelClosed())
     }
 
@@ -514,7 +509,7 @@ impl Connection {
             let message = invoke_receiver_rx
                 .recv()
                 .await
-                .expect(&UbusError::UnexpectChannelClosed().to_string());
+                .expect("failed to receive because message_receiver crashed!");
 
             /* only INVOKE should reach here, is this syntax more readable than if let? */
             let UbusCmdType::INVOKE = message.header.cmd_type else {
@@ -727,7 +722,7 @@ impl Connection {
                     invoke_receiver_tx
                         .send(message)
                         .await
-                        .expect("why the rx closed?");
+                        .expect("failed to send because invoke_handler crashed!");
                 }
                 UbusCmdType::HELLO => {
                     log::trace!(
@@ -766,10 +761,10 @@ impl Connection {
                             None
                         };
                     if let Some(receiver) = receiver {
-                        let _ = receiver.send(message).await.or_else(|e| {
-                                        log::trace!("try to send to reply_receivers_rx[{}] but is dropped, rx may not care about messages any more", seq);
-                                        Err(e)
-                                    });
+                        let _ = receiver.send(message).await
+                            .inspect_err(|e| {
+                                log::trace!("try to send to reply_receivers_rx[{}] but is dropped, rx may not care about messages any more", seq);
+                            });
                     };
                 }
                 _ => {
@@ -792,7 +787,7 @@ impl Connection {
                     .await
                     .expect("failed to send to IO, maybe ubusd got shutdown?")
             } else {
-                panic!("{}", UbusError::UnexpectChannelClosed());
+                panic!("failed to recv, maybe connection struct got dropped?");
             }
         }
     }

@@ -5,6 +5,22 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use super::*;
 use std::path::Path;
 
+pub trait AsyncIoReader: Send + 'static {
+    type Error: IOError;
+    fn get(
+        &mut self,
+        data: &mut [u8],
+    ) -> impl std::future::Future<Output = Result<(), UbusError>> + Send;
+}
+
+pub trait AsyncIoWriter: Send + 'static {
+    type Error: IOError;
+    fn put(
+        &mut self,
+        data: &[u8],
+    ) -> impl std::future::Future<Output = Result<(), UbusError>> + Send;
+}
+
 impl AsyncIoReader for OwnedReadHalf {
     type Error = std::io::Error;
     async fn get(&mut self, data: &mut [u8]) -> Result<(), UbusError> {
@@ -35,6 +51,3 @@ impl Connection {
         Self::connect(Path::new("/var/run/ubus/ubus.sock")).await
     }
 }
-
-impl IOError for std::io::Error {}
-impl std::error::Error for Error {}

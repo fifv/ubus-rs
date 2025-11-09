@@ -1,4 +1,5 @@
-use crate::{AsyncIoReader, BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError};
+use crate::usock::AsyncIoReader;
+use crate::{BlobIter, BlobTag, UbusBlob, UbusBlobType, UbusError, valid_data, values};
 use core::convert::TryInto;
 use core::mem::{size_of, transmute};
 use serde::{Deserialize, Serialize};

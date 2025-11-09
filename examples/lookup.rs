@@ -8,7 +8,6 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
     let obj_path = if args.len() > 1 { args[1].as_str() } else { "" };
 
-
     let connection = ubus::Connection::connect_ubusd()
         .await
         .map_err(|err| {

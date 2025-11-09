@@ -1,4 +1,4 @@
-use crate::{BlobMsg, HexU32, MsgTable, UbusBlob, UbusError, UbusMsgStatus};
+use crate::{BlobMsg, HexU32, MsgTable, UbusBlob, UbusError, UbusMsgStatus, valid_data};
 
 use core::convert::{TryFrom, TryInto};
 use core::mem::{align_of, size_of, transmute};

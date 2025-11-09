@@ -1,4 +1,7 @@
-use crate::*;
+use crate::{
+    usock::{AsyncIoReader, AsyncIoWriter},
+    *,
+};
 
 use core::{ops::Not, sync::atomic::AtomicU16, time::Duration};
 use std::{collections::HashMap, format, string::ToString, sync::Arc, vec::Vec};
@@ -421,7 +424,6 @@ impl Connection {
          * After restruct, client's status is ignored at all
          */
 
-
         match self
             .send_message_and_handle_reply(
                 UbusCmdType::NOTIFY,
@@ -438,7 +440,7 @@ impl Connection {
              * UbusBlob::Subscribers: only got this if no subscribers exist, with an empty MsgTable
              */
             Ok(_) => Ok(()),
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
     }
 
@@ -459,7 +461,7 @@ impl Connection {
             .await
         {
             Ok(_) => Ok(()),
-            Err(e) => return Err(e),
+            Err(e) => Err(e),
         }
     }
 }
@@ -559,7 +561,6 @@ impl Connection {
                 );
                 continue;
             };
-
 
             enum FindMethodStatus {
                 Found(UbusMethod),
@@ -713,7 +714,6 @@ impl Connection {
                     std::io::Error::last_os_error()
                 );
             };
-
 
             // dbg!(&message);
             log::trace!("got message: {:?}", &message);

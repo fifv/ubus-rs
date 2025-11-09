@@ -1,6 +1,6 @@
 use crate::*;
 
-use core::{ops::Not, sync::atomic::AtomicU16};
+use core::{ops::Not, sync::atomic::AtomicU16, time::Duration};
 use std::{collections::HashMap, format, string::ToString, sync::Arc, vec::Vec};
 extern crate alloc;
 use alloc::string::String;
@@ -9,6 +9,7 @@ use storage_endian::BigEndian;
 use tokio::{
     sync::{RwLock, mpsc},
     task::JoinSet,
+    time::timeout,
 };
 use ubuserror::*;
 
@@ -706,7 +707,6 @@ impl Connection {
         invoke_receiver_tx: mpsc::Sender<UbusMsg>,
     ) {
         loop {
-            UbusMsg::from_io(&mut io_reader).await.ok();
             let Ok(message) = UbusMsg::from_io(&mut io_reader).await else {
                 panic!(
                     "failed to read from io, maybe ubusd got shutdown? {}",
@@ -817,45 +817,53 @@ impl Connection {
 
         let mut data_blobs = Vec::with_capacity(2);
         let status = 'messages: loop {
-            if let Some(message) = reply_receiver_rx.recv().await {
-                match message.header.cmd_type {
-                    UbusCmdType::STATUS => {
-                        /*
-                         * remove the channel to save memory, e.g. channel(8) x 65535 consume ~100MB
-                         */
-                        self.reply_receivers_tx
-                            .write()
-                            .await
-                            .remove(&new_request_sequence.into());
+            match timeout(Duration::from_millis(3000), reply_receiver_rx.recv()).await {
+                Ok(Some(message)) => {
+                    match message.header.cmd_type {
+                        UbusCmdType::STATUS => {
+                            /*
+                             * remove the channel to save memory, e.g. channel(8) x 65535 consume ~100MB
+                             */
+                            self.reply_receivers_tx
+                                .write()
+                                .await
+                                .remove(&new_request_sequence.into());
 
-                        for blob in message.ubus_blobs {
-                            match blob {
-                                UbusBlob::Status(UbusMsgStatus::OK) => {
-                                    break 'messages Ok(());
+                            for blob in message.ubus_blobs {
+                                match blob {
+                                    UbusBlob::Status(UbusMsgStatus::OK) => {
+                                        break 'messages Ok(());
+                                    }
+                                    UbusBlob::Status(status) => {
+                                        break 'messages Err(UbusError::Status(status));
+                                    }
+                                    /* when NOTIFY, the response by ubusd doesn't contain a Status... wtf */
+                                    _ => break 'messages Ok(()),
                                 }
-                                UbusBlob::Status(status) => {
-                                    break 'messages Err(UbusError::Status(status));
-                                }
-                                /* when NOTIFY, the response by ubusd doesn't contain a Status... wtf */
-                                _ => break 'messages Ok(()),
                             }
+                            // break 'messages Err(UbusError::InvalidData("Invalid status message"));
                         }
-                        // break 'messages Err(UbusError::InvalidData("Invalid status message"));
-                    }
-                    UbusCmdType::DATA => {
-                        data_blobs.push(message.ubus_blobs);
-                        // break 'messages Err(UbusError::InvalidData("Invalid data message"));
-                    }
-                    _ => {
-                        log::warn!(
-                            "receive a message which doesn't know how to handle: {:?}",
-                            &message
-                        );
+                        UbusCmdType::DATA => {
+                            data_blobs.push(message.ubus_blobs);
+                            // break 'messages Err(UbusError::InvalidData("Invalid data message"));
+                        }
+                        _ => {
+                            log::warn!(
+                                "receive a message which doesn't know how to handle: {:?}",
+                                &message
+                            );
+                        }
                     }
                 }
-            } else {
-                log::warn!("the reply_receiver_tx disappears?! this shouldn't happen!")
-            };
+                Ok(None) => {
+                    log::warn!("the reply_receiver_tx disappears?! this shouldn't happen!");
+                    break 'messages Err(UbusError::UnexpectChannelClosed());
+                }
+                Err(_) => {
+                    log::warn!("waiting for long time but not got a status");
+                    break 'messages Err(UbusError::ReplyTimeout());
+                }
+            }
         };
         match status {
             Ok(_) => Ok(data_blobs),

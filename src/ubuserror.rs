@@ -29,4 +29,6 @@ pub enum UbusError {
     InvalidPath(String),
     #[error("Channel closed")]
     UnexpectChannelClosed(),
+    #[error("Reply Timeout")]
+    ReplyTimeout(),
 }

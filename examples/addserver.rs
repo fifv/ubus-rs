@@ -46,7 +46,7 @@ async fn main() {
                 .method("echo", |req_args: MsgTable| req_args.to_owned())
                 /* a closure with move capture */
                 .method("closure", move |_req_args: MsgTable| {
-                    json!({"captured-value":some_captured_value})
+                    json!({"captured-value": some_captured_value})
                         .try_into()
                         .unwrap()
                 })
@@ -57,7 +57,7 @@ async fn main() {
                     req_args
                 })
                 /*
-                 *  previously, the req_args is a &, which unsatisfy the async lifetime, so clone here
+                 *  in previous version, the req_args is a &, which unsatisfy the async lifetime, so clone here
                  */
                 .method_async("async-clone", |req_args: MsgTable| {
                     let a = req_args.clone();

@@ -4,11 +4,17 @@ use alloc::vec::Vec;
 use core::pin::Pin;
 use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
-pub type UbusMethod = Arc<dyn Fn(MsgTable) -> MsgTable + Send + Sync>;
-pub type UbusAsyncMethod =
+pub type UbusMethodSync = Arc<dyn Fn(MsgTable) -> MsgTable + Send + Sync>;
+pub type UbusMethodAsync =
     Arc<dyn Fn(MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 // impl<T> UbusMethodLike for T where T: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
+
+#[derive(Clone)]
+pub enum UbusMethod {
+    Sync(UbusMethodSync),
+    Async(UbusMethodAsync),
+}
 
 // #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 // pub struct Method {
@@ -27,7 +33,7 @@ pub struct UbusServerObject {
      * used on server side object, the actually callbacks
      */
     pub methods: HashMap<String, UbusMethod>,
-    pub methods_async: HashMap<String, UbusAsyncMethod>,
+    // pub methods_async: HashMap<String, UbusMethodAsync>,
 }
 
 #[derive(Default)]
@@ -37,7 +43,7 @@ pub struct UbusServerObjectBuilder {
      * used on server side object, the actually callbacks
      */
     pub methods: HashMap<String, UbusMethod>,
-    pub methods_async: HashMap<String, UbusAsyncMethod>,
+    // pub methods_async: HashMap<String, UbusMethodAsync>,
 }
 
 impl UbusServerObjectBuilder {
@@ -54,7 +60,7 @@ impl UbusServerObjectBuilder {
     ) -> Self {
         self.methods.insert(
             name.into(),
-            Arc::new(callback),
+            UbusMethod::Sync(Arc::new(callback)),
             // Arc::new( |args: &MsgTable|{ Arc::pin(async {callback(args).await})}),
         );
         self
@@ -78,8 +84,8 @@ impl UbusServerObjectBuilder {
         name: &str,
         callback: M,
     ) -> Self {
-        self.methods_async
-            .insert(name.into(), Arc::new(move |msg| Box::pin(callback(msg))));
+        self.methods
+            .insert(name.into(), UbusMethod::Async(Arc::new(move |msg| Box::pin(callback(msg)))));
         self
     }
 

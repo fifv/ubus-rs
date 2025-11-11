@@ -381,7 +381,7 @@ impl Connection {
         };
 
         new_server_obj.methods = server_obj_builder.methods;
-        new_server_obj.methods_async = server_obj_builder.methods_async;
+        // new_server_obj.methods_async = server_obj_builder.methods_async;
 
         let new_server_obj_id = new_server_obj.id;
         self.server_objs
@@ -564,15 +564,12 @@ impl Connection {
                 continue;
             };
 
-            enum SyncOrAsyncMethod {
-                Sync(UbusMethod),
-                Async(UbusAsyncMethod),
-            }
+
             enum FindMethodStatus {
-                Found(SyncOrAsyncMethod),
+                Found(UbusMethod),
                 ObjectNotFound,
                 MethodNotFound,
-                MethodDuplicated,
+                // MethodDuplicated,
             }
             // tokio::runtime::Runtime::new().unwrap().block_on(async {});
 
@@ -589,18 +586,21 @@ impl Connection {
                 .await
                 .get(&requested_server_obj_id.into())
             {
-                match (
-                    server_obj.methods.get(&method_name),
-                    server_obj.methods_async.get(&method_name),
-                ) {
-                    (Some(_), Some(_)) => FindMethodStatus::MethodDuplicated,
-                    (Some(method), None) => {
-                        FindMethodStatus::Found(SyncOrAsyncMethod::Sync(method.clone()))
+                match 
+                    server_obj.methods.get(&method_name)
+                    // server_obj.methods_async.get(&method_name),
+                 {
+                    // (Some(_), Some(_)) => FindMethodStatus::MethodDuplicated,
+                    // Some(UbusMethod::Sync(method)) => {
+                    //     FindMethodStatus::Found(UbusMethod::Sync(method.clone()))
+                    // }
+                    // Some(UbusMethod::Async(method_async)) => {
+                    //     FindMethodStatus::Found(UbusMethod::Async(method_async.clone()))
+                    // }
+                    Some(method) => {
+                        FindMethodStatus::Found(method.clone())
                     }
-                    (None, Some(method_async)) => {
-                        FindMethodStatus::Found(SyncOrAsyncMethod::Async(method_async.clone()))
-                    }
-                    (None, None) => FindMethodStatus::MethodNotFound,
+                    None => FindMethodStatus::MethodNotFound,
                 }
             } else {
                 FindMethodStatus::ObjectNotFound
@@ -614,8 +614,8 @@ impl Connection {
                     FindMethodStatus::Found(method) => {
                         // tokio::spawn(async {});
                         let reply_args = match method {
-                            SyncOrAsyncMethod::Sync(method) => method(req_args),
-                            SyncOrAsyncMethod::Async(method) => method(req_args).await,
+                            UbusMethod::Sync(method) => method(req_args),
+                            UbusMethod::Async(method) => method(req_args).await,
                         };
                         /* here client_obj_id == server objid */
                         message_sender_tx
@@ -689,7 +689,7 @@ impl Connection {
                             })
                             .ok();
                     }
-                    FindMethodStatus::ObjectNotFound | FindMethodStatus::MethodDuplicated => {
+                    FindMethodStatus::ObjectNotFound => {
                         /* server obj not found */
                         message_sender_tx
                             .send(UbusMsg {

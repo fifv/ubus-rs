@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use core::pin::Pin;
 use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
-pub type UbusMethodSync = Arc<dyn (Fn(MsgTable) -> MsgTable) + Send + Sync>;
-pub type UbusMethodAsync =
+type UbusMethodSync = Arc<dyn (Fn(MsgTable) -> MsgTable) + Send + Sync>;
+type UbusMethodAsync =
     Arc<dyn (Fn(MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>>) + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 // impl<T> UbusMethodLike for T where T: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}

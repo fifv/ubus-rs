@@ -6,7 +6,7 @@ use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
 pub type UbusMethod = Arc<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
 pub type UbusAsyncMethod =
-    Arc<dyn Fn(&MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync>;
+    Arc<dyn Fn(MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 // impl<T> UbusMethodLike for T where T: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 
@@ -73,7 +73,7 @@ impl UbusServerObjectBuilder {
     // }
     pub fn method_async<M, Fut>(mut self, name: &str, callback: M) -> Self
     where
-        M: Fn(&MsgTable) -> Fut + Send + Sync + 'static,
+        M: Fn(MsgTable) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = MsgTable> + Send + 'static,
     {
         let func: UbusAsyncMethod = Arc::new(move |msg| Box::pin(callback(msg)));

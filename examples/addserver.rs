@@ -50,9 +50,22 @@ async fn main() {
                         .try_into()
                         .unwrap()
                 })
-                .method_async("async", |_req_args: &MsgTable| async {
-                    time::sleep(Duration::from_millis(500)).await;
-                    json!({"async-usable": true}).try_into().unwrap()
+                /* async will takes ownership */
+                .method_async("async", |req_args: MsgTable| async {
+
+                        time::sleep(Duration::from_millis(500)).await;
+                        // json!({"async-usable": true}).try_into().unwrap()
+                        req_args
+                    
+                })
+                /* previously, the req_args is a &, which unsatisfy the async lifetime, so clone here */
+                .method_async("async-clone", |req_args: MsgTable|  {
+                    let a = req_args.clone();
+                    async move {
+                        time::sleep(Duration::from_millis(500)).await;
+                        // json!({"async-usable": true}).try_into().unwrap()
+                        a
+                    }
                 }),
         )
         .await

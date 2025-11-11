@@ -615,7 +615,7 @@ impl Connection {
                         // tokio::spawn(async {});
                         let reply_args = match method {
                             SyncOrAsyncMethod::Sync(method) => method(&req_args),
-                            SyncOrAsyncMethod::Async(method) => method(&req_args).await,
+                            SyncOrAsyncMethod::Async(method) => method(req_args).await,
                         };
                         /* here client_obj_id == server objid */
                         message_sender_tx

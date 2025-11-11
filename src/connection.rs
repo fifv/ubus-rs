@@ -564,7 +564,6 @@ impl Connection {
                 continue;
             };
 
-
             enum FindMethodStatus {
                 Found(UbusMethod),
                 ObjectNotFound,
@@ -586,10 +585,7 @@ impl Connection {
                 .await
                 .get(&requested_server_obj_id.into())
             {
-                match 
-                    server_obj.methods.get(&method_name)
-                    // server_obj.methods_async.get(&method_name),
-                 {
+                match server_obj.methods.get(&method_name) {
                     // (Some(_), Some(_)) => FindMethodStatus::MethodDuplicated,
                     // Some(UbusMethod::Sync(method)) => {
                     //     FindMethodStatus::Found(UbusMethod::Sync(method.clone()))
@@ -597,9 +593,7 @@ impl Connection {
                     // Some(UbusMethod::Async(method_async)) => {
                     //     FindMethodStatus::Found(UbusMethod::Async(method_async.clone()))
                     // }
-                    Some(method) => {
-                        FindMethodStatus::Found(method.clone())
-                    }
+                    Some(method) => FindMethodStatus::Found(method.clone()),
                     None => FindMethodStatus::MethodNotFound,
                 }
             } else {

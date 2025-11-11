@@ -4,9 +4,9 @@ use alloc::vec::Vec;
 use core::pin::Pin;
 use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
-pub type UbusMethodSync = Arc<dyn Fn(MsgTable) -> MsgTable + Send + Sync>;
+pub type UbusMethodSync = Arc<dyn (Fn(MsgTable) -> MsgTable) + Send + Sync>;
 pub type UbusMethodAsync =
-    Arc<dyn Fn(MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync>;
+    Arc<dyn (Fn(MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>>) + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 // impl<T> UbusMethodLike for T where T: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 
@@ -77,15 +77,17 @@ impl UbusServerObjectBuilder {
     // }
 
     pub fn method_async<
-        M: Fn(MsgTable) -> Fut + Sync + Send + 'static,
+        M: (Fn(MsgTable) -> Fut) + Sync + Send + 'static,
         Fut: Future<Output = MsgTable> + Send + Sync + 'static,
     >(
         mut self,
         name: &str,
         callback: M,
     ) -> Self {
-        self.methods
-            .insert(name.into(), UbusMethod::Async(Arc::new(move |msg| Box::pin(callback(msg)))));
+        self.methods.insert(
+            name.into(),
+            UbusMethod::Async(Arc::new(move |msg| Box::pin(callback(msg)))),
+        );
         self
     }
 

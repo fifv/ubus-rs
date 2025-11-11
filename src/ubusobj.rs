@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::pin::Pin;
 use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
-pub type UbusMethod = Arc<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
+pub type UbusMethod = Arc<dyn Fn(MsgTable) -> MsgTable + Send + Sync>;
 pub type UbusAsyncMethod =
     Arc<dyn Fn(MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
@@ -47,7 +47,7 @@ impl UbusServerObjectBuilder {
             ..Default::default()
         }
     }
-    pub fn method<M: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static>(
+    pub fn method<M: Fn(MsgTable) -> MsgTable + Send + Sync + 'static>(
         mut self,
         name: &str,
         callback: M,
@@ -60,26 +60,38 @@ impl UbusServerObjectBuilder {
         self
     }
 
-    // pub fn method_async<M: Fn(&MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync + Clone + 'static>(
+    // pub fn method_async<M: AsyncFn(MsgTable) -> MsgTable + Sync + Send + 'static>(
     //     mut self,
     //     name: &str,
     //     callback: M,
     // ) -> Self {
-    //     self.methods_async.insert(
-    //         name.into(),
-    //         Arc::new(callback),
-    //     );
+    //     self.methods_async
+    //         .insert(name.into(), Arc::new(move |msg| Box::pin(callback(msg))));
     //     self
     // }
-    pub fn method_async<M, Fut>(mut self, name: &str, callback: M) -> Self
-    where
-        M: Fn(MsgTable) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = MsgTable> + Send + 'static,
-    {
-        let func: UbusAsyncMethod = Arc::new(move |msg| Box::pin(callback(msg)));
-        self.methods_async.insert(name.into(), func);
+
+    pub fn method_async<
+        M: Fn(MsgTable) -> Fut + Sync + Send + 'static,
+        Fut: Future<Output = MsgTable> + Send + Sync + 'static,
+    >(
+        mut self,
+        name: &str,
+        callback: M,
+    ) -> Self {
+        self.methods_async
+            .insert(name.into(), Arc::new(move |msg| Box::pin(callback(msg))));
         self
     }
+
+    // pub fn method_async<M, Fut>(mut self, name: &str, callback: M) -> Self
+    // where
+    //     M: Fn(MsgTable) -> Fut + Send + Sync + 'static,
+    //     Fut: Future<Output = MsgTable> + Send + 'static,
+    // {
+    //     let func: UbusAsyncMethod = Arc::new(move |msg| Box::pin(callback(msg)));
+    //     self.methods_async.insert(name.into(), func);
+    //     self
+    // }
 
     pub async fn register(self, conn: &mut Connection) -> Result<u32, UbusError> {
         conn.add_server(self).await

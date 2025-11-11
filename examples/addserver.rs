@@ -22,11 +22,11 @@ async fn main() {
         })
         .unwrap();
 
-    fn handle_hi(_req_args: &MsgTable) -> MsgTable {
+    fn handle_hi(_req_args: MsgTable) -> MsgTable {
         MsgTable::try_from(r#"{"haha": true}"#).unwrap()
     }
     /* closure can capture */
-    let some_closure = |_req_args: &MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap();
+    let some_closure = |_req_args: MsgTable| MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap();
     let some_captured_value = 1;
     /*
      * add a server object with some methods, closure with capture is okay
@@ -39,27 +39,27 @@ async fn main() {
                 /* a closure variable */
                 .method("hiii", some_closure)
                 /* an inline closure */
-                .method("hii", |_req_args: &MsgTable| {
+                .method("hii", |_req_args: MsgTable| {
                     MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
                 })
                 /* an inline closure, echo request args */
-                .method("echo", |req_args: &MsgTable| req_args.to_owned())
+                .method("echo", |req_args: MsgTable| req_args.to_owned())
                 /* a closure with move capture */
-                .method("closure", move |_req_args: &MsgTable| {
+                .method("closure", move |_req_args: MsgTable| {
                     json!({"captured-value":some_captured_value})
                         .try_into()
                         .unwrap()
                 })
                 /* async will takes ownership */
-                .method_async("async", |req_args: MsgTable| async {
-
-                        time::sleep(Duration::from_millis(500)).await;
-                        // json!({"async-usable": true}).try_into().unwrap()
-                        req_args
-                    
+                .method_async("async", async |req_args: MsgTable| {
+                    time::sleep(Duration::from_millis(500)).await;
+                    // json!({"async-usable": true}).try_into().unwrap()
+                    req_args
                 })
-                /* previously, the req_args is a &, which unsatisfy the async lifetime, so clone here */
-                .method_async("async-clone", |req_args: MsgTable|  {
+                /*
+                 *  previously, the req_args is a &, which unsatisfy the async lifetime, so clone here
+                 */
+                .method_async("async-clone", |req_args: MsgTable| {
                     let a = req_args.clone();
                     async move {
                         time::sleep(Duration::from_millis(500)).await;
@@ -80,7 +80,7 @@ async fn main() {
      *  you can use `builder.register(&mut connection)` , this is same as `connection.add_server(builder)`
      */
     let _ = UbusServerObjectBuilder::new("t2")
-        .method("hi", |_req_args: &MsgTable| {
+        .method("hi", |_req_args: MsgTable| {
             MsgTable::try_from(r#"{ "clo": "sure" }"#).unwrap()
         })
         .register(&mut connection)

@@ -614,7 +614,7 @@ impl Connection {
                     FindMethodStatus::Found(method) => {
                         // tokio::spawn(async {});
                         let reply_args = match method {
-                            SyncOrAsyncMethod::Sync(method) => method(&req_args),
+                            SyncOrAsyncMethod::Sync(method) => method(req_args),
                             SyncOrAsyncMethod::Async(method) => method(req_args).await,
                         };
                         /* here client_obj_id == server objid */

@@ -371,13 +371,14 @@ dependencies = [
 [[package]]
 name = "storage_endian"
 version = "0.1.0"
-source = "git+https://github.com/jbit/storage_endian.git#866f041a53b6b04c41fe39e7f0960429365f8440"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "450890d265e3f042570935184b2e429a50b51f487b7d0a443eb6489dd1e0c4d6"
 
 [[package]]
 name = "syn"
-version = "2.0.109"
+version = "2.0.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f17c7e013e88258aa9543dcbe81aca68a667a9ac37cd69c9fbc07858bfe0e2f"
+checksum = "a99801b5bd34ede4cf3fc688c5919368fea4e4814a4664359503e6015b280aea"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -434,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "ubus"
-version = "0.2.0-beta.0"
+version = "0.2.0-beta.1"
 dependencies = [
  "env_logger",
  "log",

@@ -1,4 +1,4 @@
-use std::{env, path::Path, time::Duration};
+use std::{env, path::Path, pin::Pin, time::Duration};
 
 use log::trace;
 use serde_json::json;
@@ -44,16 +44,22 @@ async fn main() {
                 })
                 /* an inline closure, echo request args */
                 .method("echo", |req_args: &MsgTable| req_args.to_owned())
-                /* a closure with capture */
+                /* a closure with move capture */
                 .method("closure", move |_req_args: &MsgTable| {
                     json!({"captured-value":some_captured_value})
                         .try_into()
                         .unwrap()
+                })
+                .method_async("async", |_req_args: &MsgTable| async {
+                    time::sleep(Duration::from_millis(500)).await;
+                    json!({"async-usable": true}).try_into().unwrap()
                 }),
         )
         .await
         .unwrap();
 
+    // let wtf = async move |_| {};
+    // wtf.clone();
     /*
      * another way to register a server object
      *

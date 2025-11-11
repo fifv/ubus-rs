@@ -1,9 +1,12 @@
 extern crate alloc;
 use crate::*;
 use alloc::vec::Vec;
-use std::{collections::HashMap, string::String, sync::Arc};
+use core::pin::Pin;
+use std::{boxed::Box, collections::HashMap, string::String, sync::Arc};
 
 pub type UbusMethod = Arc<dyn Fn(&MsgTable) -> MsgTable + Send + Sync>;
+pub type UbusAsyncMethod =
+    Arc<dyn Fn(&MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync>;
 // pub trait UbusMethodLike: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 // impl<T> UbusMethodLike for T where T: Fn(&MsgTable) -> MsgTable + Send + Sync + 'static {}
 
@@ -24,6 +27,7 @@ pub struct UbusServerObject {
      * used on server side object, the actually callbacks
      */
     pub methods: HashMap<String, UbusMethod>,
+    pub methods_async: HashMap<String, UbusAsyncMethod>,
 }
 
 #[derive(Default)]
@@ -33,6 +37,7 @@ pub struct UbusServerObjectBuilder {
      * used on server side object, the actually callbacks
      */
     pub methods: HashMap<String, UbusMethod>,
+    pub methods_async: HashMap<String, UbusAsyncMethod>,
 }
 
 impl UbusServerObjectBuilder {
@@ -47,9 +52,35 @@ impl UbusServerObjectBuilder {
         name: &str,
         callback: M,
     ) -> Self {
-        self.methods.insert(name.into(), Arc::new(callback));
+        self.methods.insert(
+            name.into(),
+            Arc::new(callback),
+            // Arc::new( |args: &MsgTable|{ Arc::pin(async {callback(args).await})}),
+        );
         self
     }
+
+    // pub fn method_async<M: Fn(&MsgTable) -> Pin<Box<dyn Future<Output = MsgTable> + Send>> + Send + Sync + Clone + 'static>(
+    //     mut self,
+    //     name: &str,
+    //     callback: M,
+    // ) -> Self {
+    //     self.methods_async.insert(
+    //         name.into(),
+    //         Arc::new(callback),
+    //     );
+    //     self
+    // }
+    pub fn method_async<M, Fut>(mut self, name: &str, callback: M) -> Self
+    where
+        M: Fn(&MsgTable) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = MsgTable> + Send + 'static,
+    {
+        let func: UbusAsyncMethod = Arc::new(move |msg| Box::pin(callback(msg)));
+        self.methods_async.insert(name.into(), func);
+        self
+    }
+
     pub async fn register(self, conn: &mut Connection) -> Result<u32, UbusError> {
         conn.add_server(self).await
     }
